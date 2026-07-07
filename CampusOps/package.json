@@ -1,0 +1,17 @@
+{
+  "name": "campusops-ai-platform",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "dev:frontend": "npm --prefix frontend run dev -- --host 127.0.0.1",
+    "dev:backend": "npm --prefix backend run dev",
+    "build": "npm --prefix frontend run build",
+    "lint": "npm --prefix frontend run lint && npm --prefix backend run lint",
+    "start": "npm --prefix backend start"
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  }
+}

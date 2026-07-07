@@ -1,0 +1,14 @@
+{
+  "name": "campusops-backend",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch src/server.js",
+    "start": "node src/server.js",
+    "lint": "node --check src/server.js && node --check src/db.js && node --check src/validation.js"
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  }
+}
