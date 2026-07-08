@@ -2,17 +2,29 @@ import { createServer } from 'node:http'
 import {
   createAuditEvent,
   createDepartment,
+  createCircular,
+  createCircularReadReceipt,
+  createCircularReadReceipts,
+  createReportAuditEvent,
+  createStaffProfile,
   createSubject,
   getAcademicState,
   getAuditEvents,
+  getCircularState,
   getDatabaseInfo,
   getDepartments,
   getMasterData,
+  getReportByName,
+  getReports,
+  getStaffState,
   getSubjects,
   resetAcademicData,
+  resetCircularData,
   resetMasterData,
+  resetStaffData,
   saveAcademicState,
   updateDepartment,
+  updateStaffProfile,
   updateSubject,
 } from './db.js'
 import {
@@ -271,6 +283,171 @@ async function handleAcademicState(request, response, pathname) {
   notFound(response)
 }
 
+async function handleStaff(request, response, pathname) {
+  if (pathname === '/api/staff-state') {
+    if (request.method !== 'GET') {
+      methodNotAllowed(response)
+      return
+    }
+
+    sendJson(response, 200, getStaffState())
+    return
+  }
+
+  if (pathname === '/api/staff-profiles') {
+    if (request.method !== 'POST') {
+      methodNotAllowed(response)
+      return
+    }
+
+    sendJson(response, 201, {
+      staffProfile: createStaffProfile(await readJson(request)),
+    })
+    return
+  }
+
+  const staffProfileMatch = pathname.match(/^\/api\/staff-profiles\/([^/]+)$/)
+  if (staffProfileMatch) {
+    if (request.method !== 'PUT') {
+      methodNotAllowed(response)
+      return
+    }
+
+    const id = decodeURIComponent(staffProfileMatch[1])
+    const staffProfile = updateStaffProfile(id, await readJson(request))
+    if (!staffProfile) {
+      notFound(response)
+      return
+    }
+
+    sendJson(response, 200, {
+      staffProfile,
+    })
+    return
+  }
+
+  if (pathname === '/api/staff-state/reset') {
+    if (request.method !== 'POST') {
+      methodNotAllowed(response)
+      return
+    }
+
+    sendJson(response, 200, resetStaffData())
+    return
+  }
+
+  notFound(response)
+}
+
+async function handleCirculars(request, response, pathname) {
+  if (pathname === '/api/circular-state') {
+    if (request.method !== 'GET') {
+      methodNotAllowed(response)
+      return
+    }
+
+    sendJson(response, 200, getCircularState())
+    return
+  }
+
+  if (pathname === '/api/circulars') {
+    if (request.method !== 'POST') {
+      methodNotAllowed(response)
+      return
+    }
+
+    sendJson(response, 201, {
+      circular: createCircular(await readJson(request)),
+    })
+    return
+  }
+
+  if (pathname === '/api/circular-read-receipts') {
+    if (request.method !== 'POST') {
+      methodNotAllowed(response)
+      return
+    }
+
+    sendJson(response, 201, {
+      readReceipt: createCircularReadReceipt(await readJson(request)),
+    })
+    return
+  }
+
+  if (pathname === '/api/circular-read-receipts/bulk') {
+    if (request.method !== 'POST') {
+      methodNotAllowed(response)
+      return
+    }
+
+    const payload = await readJson(request)
+    sendJson(response, 200, {
+      readReceipts: createCircularReadReceipts(payload.readReceipts),
+    })
+    return
+  }
+
+  if (pathname === '/api/circular-state/reset') {
+    if (request.method !== 'POST') {
+      methodNotAllowed(response)
+      return
+    }
+
+    sendJson(response, 200, resetCircularData())
+    return
+  }
+
+  notFound(response)
+}
+
+function readReportFilters(searchParams) {
+  return {
+    department: searchParams.get('department') ?? 'all',
+    semester: searchParams.get('semester') ?? 'all',
+    date: searchParams.get('date') ?? '',
+    status: searchParams.get('status') ?? 'all',
+    role: searchParams.get('role') ?? 'admin',
+    actorId: searchParams.get('actorId') ?? '',
+  }
+}
+
+async function handleReports(request, response, pathname, searchParams) {
+  if (pathname === '/api/reports') {
+    if (request.method !== 'GET') {
+      methodNotAllowed(response)
+      return
+    }
+
+    sendJson(response, 200, getReports(readReportFilters(searchParams)))
+    return
+  }
+
+  if (pathname === '/api/reports/actions') {
+    if (request.method !== 'POST') {
+      methodNotAllowed(response)
+      return
+    }
+
+    sendJson(response, 201, {
+      auditEvent: createReportAuditEvent(await readJson(request)),
+    })
+    return
+  }
+
+  const reportMatch = pathname.match(/^\/api\/reports\/([^/]+)$/)
+  if (reportMatch) {
+    if (request.method !== 'GET') {
+      methodNotAllowed(response)
+      return
+    }
+
+    sendJson(response, 200, getReportByName(decodeURIComponent(reportMatch[1]), readReportFilters(searchParams)))
+    return
+  }
+
+  notFound(response)
+}
+
 const server = createServer(async (request, response) => {
   response.setHeader('Access-Control-Allow-Origin', '*')
 
@@ -286,6 +463,7 @@ const server = createServer(async (request, response) => {
 
   const url = new URL(request.url ?? '/', `http://${request.headers.host ?? `${host}:${port}`}`)
   const { pathname } = url
+  const { searchParams } = url
 
   try {
     if (pathname === '/api/health') {
@@ -308,6 +486,25 @@ const server = createServer(async (request, response) => {
 
     if (pathname.startsWith('/api/academic-state')) {
       await handleAcademicState(request, response, pathname)
+      return
+    }
+
+    if (pathname.startsWith('/api/staff-state') || pathname.startsWith('/api/staff-profiles')) {
+      await handleStaff(request, response, pathname)
+      return
+    }
+
+    if (
+      pathname.startsWith('/api/circular-state') ||
+      pathname.startsWith('/api/circulars') ||
+      pathname.startsWith('/api/circular-read-receipts')
+    ) {
+      await handleCirculars(request, response, pathname)
+      return
+    }
+
+    if (pathname.startsWith('/api/reports')) {
+      await handleReports(request, response, pathname, searchParams)
       return
     }
 

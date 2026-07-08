@@ -16,6 +16,13 @@ import {
 } from '../../data/academic'
 import { circulars as seededCirculars } from '../../data/circulars'
 import {
+  createCircularOnServer,
+  createCircularReadReceiptOnServer,
+  createCircularReadReceiptsOnServer,
+  fetchCircularState,
+  resetCircularStateOnServer,
+} from '../../lib/api'
+import {
   formatAudience,
   isCircularActive,
   isCircularVisibleTo,
@@ -142,6 +149,8 @@ export function CircularsCenter({ currentRole, actorId, userName, onAuditEvent }
     () => storedState?.readReceipts ?? [],
   )
   const [draft, setDraft] = useState<CircularDraft>(defaultDraft)
+  const [backendStatus, setBackendStatus] = useState<'checking' | 'connected' | 'offline'>('checking')
+  const [syncMessage, setSyncMessage] = useState('Checking local backend.')
   const isAdmin = currentRole === 'admin'
 
   const departments = useMemo(
@@ -184,23 +193,59 @@ export function CircularsCenter({ currentRole, actorId, userName, onAuditEvent }
     })
   }, [circulars, readReceipts])
 
-  const markRead = (circularId: string) => {
+  useEffect(() => {
+    let mounted = true
+
+    fetchCircularState()
+      .then((state) => {
+        if (!mounted) {
+          return
+        }
+
+        setCirculars(state.circulars)
+        setReadReceipts(state.readReceipts)
+        setBackendStatus('connected')
+        setSyncMessage('SQLite backend connected.')
+      })
+      .catch(() => {
+        if (!mounted) {
+          return
+        }
+
+        setBackendStatus('offline')
+        setSyncMessage('Backend offline; using browser backup.')
+      })
+
+    return () => {
+      mounted = false
+    }
+  }, [])
+
+  const markRead = async (circularId: string) => {
     const alreadyRead = readReceipts.some((receipt) => receipt.actorId === actorId && receipt.circularId === circularId)
     if (alreadyRead) {
       return
     }
 
-    setReadReceipts((currentReceipts) => [
-      ...currentReceipts,
-      {
-        actorId,
-        circularId,
-        readAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      },
-    ])
+    const receipt = {
+      actorId,
+      circularId,
+      readAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    }
+    setReadReceipts((currentReceipts) => [...currentReceipts, receipt])
+
+    if (backendStatus === 'connected') {
+      try {
+        await createCircularReadReceiptOnServer(receipt)
+        setSyncMessage('Read receipt saved to SQLite backend.')
+      } catch {
+        setBackendStatus('offline')
+        setSyncMessage('Backend save failed; read receipt saved in browser backup.')
+      }
+    }
   }
 
-  const markAllRead = () => {
+  const markAllRead = async () => {
     const missingReceipts = visibleCirculars
       .filter((circular) => !readReceipts.some((receipt) => receipt.actorId === actorId && receipt.circularId === circular.id))
       .map((circular) => ({
@@ -214,14 +259,24 @@ export function CircularsCenter({ currentRole, actorId, userName, onAuditEvent }
     }
 
     setReadReceipts((currentReceipts) => [...currentReceipts, ...missingReceipts])
+
+    if (backendStatus === 'connected') {
+      try {
+        await createCircularReadReceiptsOnServer(missingReceipts)
+        setSyncMessage('Read receipts saved to SQLite backend.')
+      } catch {
+        setBackendStatus('offline')
+        setSyncMessage('Backend save failed; read receipts saved in browser backup.')
+      }
+    }
   }
 
-  const publishCircular = () => {
+  const publishCircular = async () => {
     if (!canPublish || !isAdmin) {
       return
     }
 
-    const circular: Circular = {
+    const circularDraft: Circular = {
       id: `CIR-${Date.now().toString(36).toUpperCase()}`,
       title: draft.title.trim(),
       body: draft.body.trim(),
@@ -231,6 +286,17 @@ export function CircularsCenter({ currentRole, actorId, userName, onAuditEvent }
       expiresAt: draft.expiresAt || undefined,
       attachmentName: draft.attachmentName.trim() || undefined,
       createdBy: userName,
+    }
+
+    let circular = circularDraft
+    if (backendStatus === 'connected') {
+      try {
+        circular = await createCircularOnServer(circularDraft)
+        setSyncMessage('Circular saved to SQLite backend.')
+      } catch {
+        setBackendStatus('offline')
+        setSyncMessage('Backend save failed; circular saved in browser backup.')
+      }
     }
 
     setCirculars((currentCirculars) => [circular, ...currentCirculars])
@@ -245,13 +311,28 @@ export function CircularsCenter({ currentRole, actorId, userName, onAuditEvent }
     )
   }
 
-  const resetCirculars = () => {
+  const resetCirculars = async () => {
     if (!isAdmin) {
       return
     }
 
-    setCirculars(seededCirculars)
-    setReadReceipts([])
+    let nextCirculars = seededCirculars
+    let nextReadReceipts: CircularReadReceipt[] = []
+
+    if (backendStatus === 'connected') {
+      try {
+        const state = await resetCircularStateOnServer()
+        nextCirculars = state.circulars
+        nextReadReceipts = state.readReceipts
+        setSyncMessage('Circulars reset in SQLite backend.')
+      } catch {
+        setBackendStatus('offline')
+        setSyncMessage('Backend reset failed; browser backup reset locally.')
+      }
+    }
+
+    setCirculars(nextCirculars)
+    setReadReceipts(nextReadReceipts)
     onAuditEvent(makeAudit(userName, 'Reset circulars', 'Circular demo notices restored to seed state.', 'info'))
   }
 
@@ -262,6 +343,10 @@ export function CircularsCenter({ currentRole, actorId, userName, onAuditEvent }
           <span className="eyebrow">Notices</span>
           <h2>Admin circulars and targeted announcements</h2>
           <p>Role-aware circulars keep students and faculty informed without exposing irrelevant notices.</p>
+          <div className={clsx('master-sync-chip', `is-${backendStatus}`)}>
+            <span>{backendStatus === 'connected' ? 'SQLite backend' : backendStatus === 'checking' ? 'Checking backend' : 'Browser backup'}</span>
+            <strong>{syncMessage}</strong>
+          </div>
         </div>
         <div className="circulars-health">
           <strong>{isAdmin ? activeCount : unreadCount}</strong>

@@ -11,6 +11,7 @@ import {
   ClipboardCheck,
   Clock3,
   Database,
+  FileSpreadsheet,
   Gauge,
   GitBranch,
   IdCard,
@@ -55,6 +56,9 @@ const StaffRegister = lazy(() =>
 )
 const MasterDataCenter = lazy(() =>
   import('./components/master-data/MasterDataCenter').then((module) => ({ default: module.MasterDataCenter })),
+)
+const ReportsCenter = lazy(() =>
+  import('./components/reports/ReportsCenter').then((module) => ({ default: module.ReportsCenter })),
 )
 
 const roleLabels: Record<Role, string> = {
@@ -225,6 +229,13 @@ function App() {
           targetId: 'section-master-data',
         },
         {
+          id: 'reports',
+          label: activeRole === 'admin' ? 'Reports' : 'My Reports',
+          icon: FileSpreadsheet,
+          roles: ['admin', 'faculty'] as Role[],
+          targetId: 'section-reports',
+        },
+        {
           id: 'circulars',
           label: 'Circulars',
           icon: BellRing,
@@ -300,11 +311,13 @@ function App() {
     })
   }
 
-  const appendAuditEvent = (event: AuditEvent) => {
+  const appendAuditEvent = (event: AuditEvent, persist = true) => {
     setAuditEvents((currentEvents) => [event, ...currentEvents].slice(0, 14))
-    void persistAuditEvent(event).catch(() => {
-      // Keep the UI responsive even if the local backend has not been started.
-    })
+    if (persist) {
+      void persistAuditEvent(event).catch(() => {
+        // Keep the UI responsive even if the local backend has not been started.
+      })
+    }
   }
 
   const resolveApproval = (approvalId: string, status: ApprovalStatus) => {
@@ -508,6 +521,27 @@ function App() {
               }
             >
               <MasterDataCenter
+                currentRole={session.role}
+                actorId={session.actorId}
+                userName={session.name}
+                onAuditEvent={appendAuditEvent}
+              />
+            </Suspense>
+          </div>
+        ) : null}
+
+        {activeRole !== 'student' ? (
+          <div id="section-reports" className="section-anchor">
+            <Suspense
+              fallback={
+                <div className="reports-loading">
+                  <FileSpreadsheet size={18} />
+                  <strong>Loading reports</strong>
+                  <span>Preparing administrative reports and exports.</span>
+                </div>
+              }
+            >
+              <ReportsCenter
                 currentRole={session.role}
                 actorId={session.actorId}
                 userName={session.name}

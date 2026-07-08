@@ -249,6 +249,12 @@ export type CircularReadReceipt = {
   readAt: string
 }
 
+export type CircularState = {
+  version: 1
+  circulars: Circular[]
+  readReceipts: CircularReadReceipt[]
+}
+
 export type StaffStatus = 'active' | 'on_leave' | 'inactive'
 
 export type StaffProfile = {
@@ -263,4 +269,141 @@ export type StaffProfile = {
   status: StaffStatus
   joinedAt: string
   officeRoom: string
+}
+
+export type StaffState = {
+  version: 1
+  staffProfiles: StaffProfile[]
+}
+
+export type ReportFilters = {
+  department: string
+  semester: string
+  date: string
+  status: string
+  role: Role
+  actorId: string
+}
+
+export type AttendanceShortageReportRow = {
+  studentId: string
+  rollNo: string
+  studentName: string
+  className: string
+  semester: number
+  department: string
+  totalMarked: number
+  attended: number
+  missed: number
+  lastMarkedDate: string
+  status: 'shortage'
+  attendancePercent: number
+}
+
+export type PendingLeaveReportRow = {
+  id: string
+  studentName: string
+  rollNo: string
+  className: string
+  semester: number
+  department: string
+  subjectName: string
+  date: string
+  periodNumber: number
+  reviewerName: string
+  reason: string
+  status: LeaveStatus
+  createdAt: string
+}
+
+export type FacultyWorkloadReportRow = {
+  teacherId: string
+  employeeCode: string
+  teacherName: string
+  department: string
+  designation: string
+  staffStatus: StaffStatus
+  assignedSlots: number
+  uniqueSubjects: number
+  classSections: number
+  loadStatus: 'normal' | 'overloaded'
+}
+
+export type DepartmentSubjectCoverageReportRow = {
+  departmentId: string
+  departmentName: string
+  departmentCode: string
+  semester: number
+  totalSubjects: number
+  mappedSubjects: number
+  unmappedSubjects: number
+  unmappedSubjectCodes: string
+  coveragePercent: number
+  status: 'covered' | 'unmapped'
+}
+
+export type InactiveMasterDataReportRow = {
+  id: string
+  type: 'Department' | 'Subject'
+  name: string
+  code: string
+  owner: string
+  status: 'inactive'
+  detail: string
+}
+
+export type CircularEngagementReportRow = {
+  id: string
+  title: string
+  priority: CircularPriority
+  audience: string
+  publishedAt: string
+  active: boolean
+  targetCount: number
+  readCount: number
+  unreadCount: number
+  readRate: number
+  status: 'read' | 'unread'
+}
+
+export type DailyOperationsSummary = {
+  date: string
+  markedAttendanceCount: number
+  presentCount: number
+  absentCount: number
+  pendingLeaveAttendanceCount: number
+  pendingLeaveRequests: number
+  activeCirculars: number
+  unreadCircularReceipts: number
+  activeDepartments: number
+  activeSubjects: number
+}
+
+export type ReportsPayload = {
+  version: 1
+  source: 'sqlite'
+  generatedAt: string
+  filters: ReportFilters
+  filterOptions: {
+    departments: string[]
+    semesters: number[]
+    dates: string[]
+    statuses: string[]
+  }
+  kpis: {
+    attendanceShortage: number
+    pendingLeaves: number
+    overloadedFaculty: number
+    unmappedCoverageRows: number
+    inactiveRecords: number
+    unreadCirculars: number
+    markedAttendanceToday: number
+  }
+  attendanceShortage: AttendanceShortageReportRow[]
+  pendingLeave: PendingLeaveReportRow[]
+  facultyWorkload: FacultyWorkloadReportRow[]
+  departmentSubjectCoverage: DepartmentSubjectCoverageReportRow[]
+  inactiveMasterData: InactiveMasterDataReportRow[]
+  circularEngagement: CircularEngagementReportRow[]
+  dailySummary: DailyOperationsSummary
 }

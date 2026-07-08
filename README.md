@@ -17,7 +17,8 @@ CampusOps/
 - Role-based Admin, Faculty, and Student workspaces
 - SQLite-backed academic operations: classes, teachers, students, subjects, timetable, attendance, leave requests, approvals
 - Departments and subjects master data with SQLite-backed persistence
-- Staff register and admin circulars
+- Staff register, admin circulars, and circular read receipts with SQLite-backed persistence
+- Admin Reports and Export Center for attendance shortage, pending leave, workload, subject coverage, inactive records, circular engagement, and daily operations
 - Audit trail persistence through the backend
 - Local AI routing simulator with guardrails and workflow visualization
 - Free/local-first deployment model with no paid APIs required
@@ -55,8 +56,8 @@ The project is designed for a reliable college presentation and a realistic adop
 
 - The frontend is professional, responsive, and role-aware.
 - The backend uses local SQLite, so the demo works without internet or paid services.
-- Academic operations, master data, and audit logs are persisted outside the browser.
-- Remaining modules still keep local-first fallbacks to prevent presentation failure.
+- Academic operations, master data, staff profiles, circulars, read receipts, reports, and audit logs are persisted outside the browser.
+- Browser localStorage remains as a fallback so the demo can continue if the backend is temporarily offline.
 - The structure can later evolve to PostgreSQL/Supabase without rewriting the UI.
 
 ## Documentation
@@ -72,4 +73,4 @@ Use the Admin account first:
 - `Dr. Priya Menon`
 - Role: Admin
 
-Then switch to Faculty and Student to show role-specific views.
+Open Reports after Master Data to show CSV export, print-friendly reporting, and the SQLite sync status. Then switch to Faculty and Student to show role-specific views.

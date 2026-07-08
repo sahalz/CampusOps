@@ -18,6 +18,12 @@ import {
   timetableSlots,
 } from '../../data/academic'
 import {
+  createStaffProfileOnServer,
+  fetchStaffState,
+  resetStaffStateOnServer,
+  updateStaffProfileOnServer,
+} from '../../lib/api'
+import {
   getStaffWorkload,
   staffStatusLabel,
   summarizeStaff,
@@ -102,6 +108,20 @@ function slugify(value: string) {
     .replace(/^-|-$/g, '')
 }
 
+function sanitizeStaffDraft(draft: StaffDraft): StaffDraft {
+  return {
+    employeeCode: draft.employeeCode.trim().toUpperCase().replace(/\s+/g, ''),
+    name: draft.name.trim().replace(/\s+/g, ' '),
+    department: draft.department.trim().replace(/\s+/g, ' '),
+    designation: draft.designation.trim().replace(/\s+/g, ' '),
+    email: draft.email.trim().toLowerCase(),
+    phone: draft.phone.trim(),
+    status: draft.status,
+    joinedAt: draft.joinedAt,
+    officeRoom: draft.officeRoom.trim().replace(/\s+/g, ' '),
+  }
+}
+
 export function StaffRegister({ currentRole, actorId, userName, onAuditEvent }: StaffRegisterProps) {
   const [storedState] = useState(() => readStoredStaffState())
   const [staffProfiles, setStaffProfiles] = useState<StaffProfile[]>(
@@ -112,6 +132,8 @@ export function StaffRegister({ currentRole, actorId, userName, onAuditEvent }: 
   const [statusFilter, setStatusFilter] = useState<StaffStatus | 'all'>('all')
   const [selectedStaffId, setSelectedStaffId] = useState(staffProfiles[0]?.id ?? '')
   const [draft, setDraft] = useState<StaffDraft>(defaultDraft)
+  const [backendStatus, setBackendStatus] = useState<'checking' | 'connected' | 'offline'>('checking')
+  const [syncMessage, setSyncMessage] = useState('Checking local backend.')
   const isAdmin = currentRole === 'admin'
   const currentStaff = staffProfiles.find((staff) => staff.teacherId === actorId)
   const selectedStaff = staffProfiles.find((staff) => staff.id === selectedStaffId) ?? staffProfiles[0]
@@ -149,29 +171,88 @@ export function StaffRegister({ currentRole, actorId, userName, onAuditEvent }: 
     })
   }, [staffProfiles])
 
-  const saveStaff = () => {
+  useEffect(() => {
+    let mounted = true
+
+    fetchStaffState()
+      .then((state) => {
+        if (!mounted) {
+          return
+        }
+
+        setStaffProfiles(state.staffProfiles)
+        setSelectedStaffId((currentId) => (
+          state.staffProfiles.some((staff) => staff.id === currentId)
+            ? currentId
+            : state.staffProfiles[0]?.id ?? ''
+        ))
+        setBackendStatus('connected')
+        setSyncMessage('SQLite backend connected.')
+      })
+      .catch(() => {
+        if (!mounted) {
+          return
+        }
+
+        setBackendStatus('offline')
+        setSyncMessage('Backend offline; using browser backup.')
+      })
+
+    return () => {
+      mounted = false
+    }
+  }, [])
+
+  const saveStaff = async () => {
     if (!isAdmin || !canSave) {
       return
     }
 
-    const exists = staffProfiles.some((staff) => staff.employeeCode.toLowerCase() === draft.employeeCode.toLowerCase())
-    if (exists) {
+    const sanitizedDraft = sanitizeStaffDraft(draft)
+    const existingProfile = staffProfiles.find(
+      (staff) => staff.employeeCode.toLowerCase() === sanitizedDraft.employeeCode.toLowerCase(),
+    )
+    if (existingProfile) {
+      let savedProfile: StaffProfile = {
+        ...existingProfile,
+        ...sanitizedDraft,
+      }
+
+      if (backendStatus === 'connected') {
+        try {
+          savedProfile = await updateStaffProfileOnServer(existingProfile.id, sanitizedDraft)
+          setSyncMessage('Staff profile saved to SQLite backend.')
+        } catch {
+          setBackendStatus('offline')
+          setSyncMessage('Backend save failed; staff profile saved in browser backup.')
+        }
+      }
+
       setStaffProfiles((currentProfiles) =>
         currentProfiles.map((staff) =>
-          staff.employeeCode.toLowerCase() === draft.employeeCode.toLowerCase()
-            ? {
-                ...staff,
-                ...draft,
-              }
-            : staff,
+          staff.id === savedProfile.id ? savedProfile : staff,
         ),
       )
-      onAuditEvent(makeAudit(userName, 'Updated staff profile', `${draft.name} profile updated.`, 'success'))
+      setSelectedStaffId(savedProfile.id)
+      setDraft(sanitizeStaffDraft(savedProfile))
+      onAuditEvent(makeAudit(userName, 'Updated staff profile', `${savedProfile.name} profile updated.`, 'success'))
       return
     }
 
-    const profile: StaffProfile = {
-      ...draft,
+    let profile: StaffProfile | null = null
+
+    if (backendStatus === 'connected') {
+      try {
+        profile = await createStaffProfileOnServer(sanitizedDraft)
+        setSyncMessage('Staff profile saved to SQLite backend.')
+      } catch {
+        setBackendStatus('offline')
+        setSyncMessage('Backend save failed; staff profile saved in browser backup.')
+      }
+    }
+
+    profile ??= {
+      ...sanitizedDraft,
       id: `staff-${slugify(draft.employeeCode)}-${Date.now().toString(36)}`,
       teacherId: `t-${slugify(draft.email)}`,
     }
@@ -181,13 +262,26 @@ export function StaffRegister({ currentRole, actorId, userName, onAuditEvent }: 
     onAuditEvent(makeAudit(userName, 'Added staff profile', `${profile.name} added to staff register.`, 'success'))
   }
 
-  const resetStaff = () => {
+  const resetStaff = async () => {
     if (!isAdmin) {
       return
     }
 
-    setStaffProfiles(seededStaffProfiles)
-    setSelectedStaffId(seededStaffProfiles[0].id)
+    let nextProfiles = seededStaffProfiles
+
+    if (backendStatus === 'connected') {
+      try {
+        const state = await resetStaffStateOnServer()
+        nextProfiles = state.staffProfiles
+        setSyncMessage('Staff register reset in SQLite backend.')
+      } catch {
+        setBackendStatus('offline')
+        setSyncMessage('Backend reset failed; browser backup reset locally.')
+      }
+    }
+
+    setStaffProfiles(nextProfiles)
+    setSelectedStaffId(nextProfiles[0]?.id ?? '')
     setDraft(defaultDraft)
     onAuditEvent(makeAudit(userName, 'Reset staff register', 'Staff demo register restored to seed state.', 'info'))
   }
@@ -220,6 +314,10 @@ export function StaffRegister({ currentRole, actorId, userName, onAuditEvent }: 
           <p>
             Track staff status, departments, contact details, office rooms, and teaching load from mapped timetable slots.
           </p>
+          <div className={clsx('master-sync-chip', `is-${backendStatus}`)}>
+            <span>{backendStatus === 'connected' ? 'SQLite backend' : backendStatus === 'checking' ? 'Checking backend' : 'Browser backup'}</span>
+            <strong>{syncMessage}</strong>
+          </div>
         </div>
         <div className="staff-health">
           <strong>{isAdmin ? stats.total : profileSlots.length}</strong>

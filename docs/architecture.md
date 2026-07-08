@@ -33,24 +33,24 @@ flowchart LR
 - Period-wise leave requests and approval status
 - Departments master data
 - Subjects master data
+- Staff profiles
+- Circulars and circular read receipts
+- Administrative reports generated from SQLite-backed operational data
 - Audit events
 
 ## Local-First Fallbacks
 
-Some existing modules still use browser persistence so the app remains reliable during a presentation:
+The frontend mirrors important state into browser localStorage after backend loads and saves. If the local backend is offline during a presentation, Staff Register, Circulars, Master Data, and academic workflows can still show their last browser backup instead of failing blank.
 
-- Circulars
-- Staff register
-
-These can be moved to the backend module by module without changing the overall architecture.
+Reports are intentionally backend-first because they aggregate multiple operational tables. The Reports Center shows a clear SQLite sync status so the admin can tell whether report data is live.
 
 ## Production Upgrade Path
 
 For a college adoption pilot:
 
 1. Replace demo login with real authentication.
-2. Move all academic, circular, and staff records to backend tables.
-3. Add user and role tables with permission checks in the backend.
+2. Add user and role tables in the backend.
+3. Enforce permission checks for every report and write endpoint.
 4. Replace SQLite with PostgreSQL if multi-user deployment is needed.
 5. Add backups, logs, and deployment monitoring.
 
