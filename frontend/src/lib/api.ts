@@ -1,5 +1,6 @@
 import type {
   AttendanceRecord,
+  AuthSession,
   AuditEvent,
   ClassSection,
   Circular,
@@ -16,6 +17,7 @@ import type {
   Subject,
   Teacher,
   TimetableSlot,
+  UserAccount,
 } from '../types'
 import type { DepartmentDraft, MasterDataState, SubjectDraft } from './masterData'
 
@@ -51,6 +53,14 @@ type AuditEventResponse = {
   auditEvent: AuditEvent
 }
 
+type AuthUsersResponse = {
+  users: UserAccount[]
+}
+
+type AuthSessionResponse = {
+  session: AuthSession
+}
+
 type StaffProfileResponse = {
   staffProfile: StaffProfile
 }
@@ -76,23 +86,35 @@ type ReportActionInput = {
 }
 
 const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL ?? '/api').replace(/\/$/, '')
+export const authSessionStorageKey = 'campusops-auth-session-v2'
 
 function isErrorPayload(value: unknown): value is ErrorPayload {
   return Boolean(value && typeof value === 'object')
 }
 
+function readStoredAuthToken() {
+  try {
+    return window.localStorage.getItem(authSessionStorageKey)
+  } catch {
+    return null
+  }
+}
+
 async function requestJson<T>(path: string, init?: RequestInit, timeoutMs = 2500): Promise<T> {
   const controller = new AbortController()
   const timeout = window.setTimeout(() => controller.abort(), timeoutMs)
+  const token = readStoredAuthToken()
+  const headers = {
+    'Content-Type': 'application/json',
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...init?.headers,
+  }
 
   try {
     const response = await fetch(`${apiBaseUrl}${path}`, {
       ...init,
       signal: controller.signal,
-      headers: {
-        'Content-Type': 'application/json',
-        ...init?.headers,
-      },
+      headers,
     })
     const payload = (await response.json().catch(() => ({}))) as unknown
 
@@ -111,6 +133,41 @@ async function requestJson<T>(path: string, init?: RequestInit, timeoutMs = 2500
 
 export async function fetchBackendHealth() {
   await requestJson('/health', undefined, 1200)
+}
+
+export async function fetchAuthUsers() {
+  const response = await requestJson<AuthUsersResponse>('/auth/users')
+  return response.users
+}
+
+export async function loginOnServer(accountId: string) {
+  const response = await requestJson<AuthSessionResponse>('/auth/login', {
+    method: 'POST',
+    body: JSON.stringify({ accountId }),
+  })
+  try {
+    window.localStorage.setItem(authSessionStorageKey, response.session.token)
+  } catch {
+    // Session remains usable in-memory through the returned payload.
+  }
+  return response.session
+}
+
+export async function fetchCurrentAuthSession() {
+  const response = await requestJson<AuthSessionResponse>('/auth/session')
+  return response.session
+}
+
+export async function logoutOnServer() {
+  const response = await requestJson<{ removed: boolean }>('/auth/logout', {
+    method: 'POST',
+  })
+  try {
+    window.localStorage.removeItem(authSessionStorageKey)
+  } catch {
+    // Ignore storage cleanup failure.
+  }
+  return response
 }
 
 export function fetchMasterDataState() {

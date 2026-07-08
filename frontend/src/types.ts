@@ -69,6 +69,22 @@ export type AuditEvent = {
   severity: 'info' | 'success' | 'warning' | 'critical'
 }
 
+export type UserAccount = {
+  id: string
+  role: Role
+  name: string
+  title: string
+  email: string
+  actorId: string
+  summary: string
+  status?: 'active' | 'inactive'
+}
+
+export type AuthSession = {
+  token: string
+  user: UserAccount
+}
+
 export type RequestCase = {
   id: string
   title: string

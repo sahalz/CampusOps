@@ -28,6 +28,7 @@ Dr. Priya Menon / Academic Admin
 
 Show:
 
+- Login identity chip: `SQLite identity`
 - Academic sync chip: `SQLite backend`
 - Academic operations dashboard
 - Timetable mapping
@@ -55,7 +56,7 @@ In Reports:
 3. Filter by `Computer Science` and `Semester 5`.
 4. Search for `Rahul` to show the attendance shortage and pending leave rows.
 5. Open the subject coverage report and point out unmapped subjects.
-6. Export one report as CSV and show that an audit event is recorded.
+6. Export one report as CSV, PDF, and XLSX and show that audit events are recorded.
 7. Use Print to show the office-friendly print layout.
 
 ## 5. Academic Workflow Demo
@@ -80,7 +81,7 @@ Show:
 - Assigned periods
 - Leave approval queue
 - Read-only Master Data view for department and assigned subjects
-- Limited My Reports view for assigned leave and workload
+- Limited My Reports view for assigned leave and workload backed by backend RBAC
 
 ## 7. Student Login
 
@@ -101,4 +102,4 @@ Show:
 
 Use this explanation:
 
-> CampusOps AI is a full-stack local prototype. The frontend delivers role-specific college operations workflows, while the backend provides SQLite persistence for academics, master data, staff, circulars, reports, and audit logs. It works without paid services and can be upgraded to a campus-wide deployment with real authentication and PostgreSQL.
+> CampusOps AI is a full-stack local prototype. The frontend delivers role-specific college operations workflows, while the backend provides SQLite persistence for users, sessions, academics, master data, staff, circulars, reports, and audit logs. It works without paid services and can be upgraded to a campus-wide deployment with password or SSO authentication and PostgreSQL.

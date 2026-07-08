@@ -15,10 +15,12 @@ CampusOps/
 ## What Works
 
 - Role-based Admin, Faculty, and Student workspaces
+- SQLite-backed demo users, login sessions, and backend role checks for protected admin/faculty APIs
 - SQLite-backed academic operations: classes, teachers, students, subjects, timetable, attendance, leave requests, approvals
 - Departments and subjects master data with SQLite-backed persistence
 - Staff register, admin circulars, and circular read receipts with SQLite-backed persistence
 - Admin Reports and Export Center for attendance shortage, pending leave, workload, subject coverage, inactive records, circular engagement, and daily operations
+- Report exports in CSV, PDF, and XLSX formats with audit events
 - Audit trail persistence through the backend
 - Local AI routing simulator with guardrails and workflow visualization
 - Free/local-first deployment model with no paid APIs required
@@ -56,7 +58,7 @@ The project is designed for a reliable college presentation and a realistic adop
 
 - The frontend is professional, responsive, and role-aware.
 - The backend uses local SQLite, so the demo works without internet or paid services.
-- Academic operations, master data, staff profiles, circulars, read receipts, reports, and audit logs are persisted outside the browser.
+- Users, sessions, academic operations, master data, staff profiles, circulars, read receipts, reports, and audit logs are persisted outside the browser.
 - Browser localStorage remains as a fallback so the demo can continue if the backend is temporarily offline.
 - The structure can later evolve to PostgreSQL/Supabase without rewriting the UI.
 
@@ -73,4 +75,4 @@ Use the Admin account first:
 - `Dr. Priya Menon`
 - Role: Admin
 
-Open Reports after Master Data to show CSV export, print-friendly reporting, and the SQLite sync status. Then switch to Faculty and Student to show role-specific views.
+Open Reports after Master Data to show CSV, PDF, and XLSX export, print-friendly reporting, and the SQLite sync status. Then switch to Faculty and Student to show role-specific views.

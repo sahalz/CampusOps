@@ -45,8 +45,16 @@ import {
   workflowTemplates,
 } from './data/platform'
 import { routeCampusRequest } from './lib/agent'
-import { fetchAuditEvents, persistAuditEvent } from './lib/api'
-import type { ApprovalItem, ApprovalStatus, AuditEvent, RiskLevel, Role, RouteResult } from './types'
+import {
+  authSessionStorageKey,
+  fetchAuditEvents,
+  fetchAuthUsers,
+  fetchCurrentAuthSession,
+  loginOnServer,
+  logoutOnServer,
+  persistAuditEvent,
+} from './lib/api'
+import type { ApprovalItem, ApprovalStatus, AuditEvent, RiskLevel, Role, RouteResult, UserAccount } from './types'
 
 const WorkflowCanvas = lazy(() =>
   import('./components/WorkflowCanvas').then((module) => ({ default: module.WorkflowCanvas })),
@@ -73,19 +81,9 @@ const roleNotes: Record<Role, string> = {
   admin: 'Maps classes, students, teachers, rooms, subjects, timetable periods, and automation controls.',
 }
 
-type DemoAccount = {
-  id: string
-  role: Role
-  name: string
-  title: string
-  email: string
-  actorId: string
-  summary: string
-}
-
 const authStorageKey = 'campusops-session-v1'
 
-const demoAccounts: DemoAccount[] = [
+const demoAccounts: UserAccount[] = [
   {
     id: 'admin-office',
     role: 'admin',
@@ -172,15 +170,27 @@ function readStoredSessionId() {
   }
 }
 
+function readStoredAuthToken() {
+  try {
+    return window.localStorage.getItem(authSessionStorageKey)
+  } catch {
+    return null
+  }
+}
+
 function App() {
-  const [sessionId, setSessionId] = useState<string | null>(() => readStoredSessionId())
+  const [sessionId, setSessionId] = useState<string | null>(() => (readStoredAuthToken() ? readStoredSessionId() : null))
+  const [sessionUser, setSessionUser] = useState<UserAccount | null>(null)
+  const [accounts, setAccounts] = useState<UserAccount[]>(demoAccounts)
+  const [authStatus, setAuthStatus] = useState<'checking' | 'connected' | 'offline'>('checking')
+  const [authMessage, setAuthMessage] = useState('Checking SQLite identity.')
   const [activeWorkflowId, setActiveWorkflowId] = useState(workflowTemplates[0].id)
   const [intakeInput, setIntakeInput] = useState(samplePrompts[1])
   const [routeResult, setRouteResult] = useState<RouteResult | null>(null)
   const [approvals, setApprovals] = useState<ApprovalItem[]>(seededApprovals)
   const [auditEvents, setAuditEvents] = useState<AuditEvent[]>(seededAuditEvents)
   const [activeNavId, setActiveNavId] = useState('academics')
-  const session = demoAccounts.find((account) => account.id === sessionId) ?? null
+  const session = sessionUser ?? accounts.find((account) => account.id === sessionId) ?? null
   const activeRole = session?.role ?? 'admin'
 
   const activeWorkflow = useMemo(
@@ -284,6 +294,60 @@ function App() {
   useEffect(() => {
     let mounted = true
 
+    fetchAuthUsers()
+      .then((users) => {
+        if (!mounted) {
+          return
+        }
+
+        setAccounts(users)
+        setAuthStatus('connected')
+        setAuthMessage('SQLite identity backend connected.')
+      })
+      .catch(() => {
+        if (!mounted) {
+          return
+        }
+
+        setAccounts(demoAccounts)
+        setAuthStatus('offline')
+        setAuthMessage('Backend offline; using demo login backup.')
+      })
+
+    const token = readStoredAuthToken()
+    if (token) {
+      fetchCurrentAuthSession()
+        .then((authSession) => {
+          if (!mounted) {
+            return
+          }
+
+          setSessionUser(authSession.user)
+          setSessionId(authSession.user.id)
+          setAuthStatus('connected')
+          setAuthMessage('SQLite RBAC session restored.')
+        })
+        .catch(() => {
+          if (!mounted) {
+            return
+          }
+
+          try {
+            window.localStorage.removeItem(authSessionStorageKey)
+          } catch {
+            // Ignore storage cleanup failure.
+          }
+        })
+    }
+
+    return () => {
+      mounted = false
+    }
+  }, [])
+
+  useEffect(() => {
+    let mounted = true
+
     fetchAuditEvents()
       .then((events) => {
         if (mounted && events.length > 0) {
@@ -349,19 +413,51 @@ function App() {
     setAuditEvents(seededAuditEvents)
   }
 
-  const login = (account: DemoAccount) => {
-    setSessionId(account.id)
-    try {
-      window.localStorage.setItem(authStorageKey, account.id)
-    } catch {
-      // Session still works in-memory if storage is unavailable.
+  const login = (account: UserAccount) => {
+    const openLocalSession = () => {
+      setSessionId(account.id)
+      setSessionUser(account)
+      try {
+        window.localStorage.setItem(authStorageKey, account.id)
+      } catch {
+        // Session still works in-memory if storage is unavailable.
+      }
     }
+
+    if (authStatus === 'offline') {
+      openLocalSession()
+      return
+    }
+
+    setAuthMessage('Starting SQLite RBAC session.')
+    loginOnServer(account.id)
+      .then((authSession) => {
+        setSessionUser(authSession.user)
+        setSessionId(authSession.user.id)
+        try {
+          window.localStorage.setItem(authStorageKey, authSession.user.id)
+        } catch {
+          // Session still works in-memory if storage is unavailable.
+        }
+        setAuthStatus('connected')
+        setAuthMessage('SQLite RBAC session active.')
+      })
+      .catch(() => {
+        openLocalSession()
+        setAuthStatus('offline')
+        setAuthMessage('Backend login unavailable; using demo login backup.')
+      })
   }
 
   const logout = () => {
+    void logoutOnServer().catch(() => {
+      // Backend session may already be unavailable; local logout still succeeds.
+    })
     setSessionId(null)
+    setSessionUser(null)
     try {
       window.localStorage.removeItem(authStorageKey)
+      window.localStorage.removeItem(authSessionStorageKey)
     } catch {
       // Ignore storage cleanup failure.
     }
@@ -379,10 +475,14 @@ function App() {
               <span className="eyebrow">CampusOps AI</span>
               <h1>Choose your workspace</h1>
               <p>Each login opens a focused academic operations view with only the tools that role needs.</p>
+              <div className={clsx('master-sync-chip', `is-${authStatus}`)}>
+                <span>{authStatus === 'connected' ? 'SQLite identity' : authStatus === 'checking' ? 'Checking identity' : 'Demo backup'}</span>
+                <strong>{authMessage}</strong>
+              </div>
             </div>
           </div>
           <div className="login-grid">
-            {demoAccounts.map((account) => (
+            {accounts.map((account) => (
               <button key={account.id} type="button" className="login-card" onClick={() => login(account)}>
                 <span className={clsx('login-role-icon', `role-${account.role}`)}>
                   {account.role === 'admin' ? <ShieldCheck size={20} /> : <UserRound size={20} />}

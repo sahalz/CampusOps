@@ -8,6 +8,8 @@ import {
   Database,
   Download,
   Filter,
+  FileSpreadsheet,
+  FileText,
   Printer,
   RefreshCw,
   Search,
@@ -15,6 +17,8 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import clsx from 'clsx'
+import { strToU8, zipSync } from 'fflate'
+import { jsPDF } from 'jspdf'
 import {
   fetchReports,
   recordReportActionOnServer,
@@ -47,6 +51,8 @@ type Column<T> = {
 }
 
 type CsvRow = Record<string, string | number | boolean | null | undefined>
+
+type ExportFormat = 'csv' | 'xlsx' | 'pdf'
 
 const emptyReports: ReportsPayload = {
   version: 1,
@@ -156,6 +162,157 @@ function downloadCsv(filename: string, rows: CsvRow[]) {
   URL.revokeObjectURL(url)
 }
 
+function xmlEscape(value: string | number | boolean | null | undefined) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;')
+}
+
+function columnName(index: number) {
+  let name = ''
+  let current = index + 1
+  while (current > 0) {
+    const remainder = (current - 1) % 26
+    name = String.fromCharCode(65 + remainder) + name
+    current = Math.floor((current - 1) / 26)
+  }
+  return name
+}
+
+function worksheetXml(rows: CsvRow[]) {
+  const headers = Object.keys(rows[0] ?? {})
+  const rowXml = [
+    headers,
+    ...rows.map((row) => headers.map((header) => row[header])),
+  ]
+    .map((cells, rowIndex) => {
+      const cellXml = cells
+        .map((value, columnIndex) => {
+          const cellRef = `${columnName(columnIndex)}${rowIndex + 1}`
+          if (typeof value === 'number' && Number.isFinite(value)) {
+            return `<c r="${cellRef}"><v>${value}</v></c>`
+          }
+
+          return `<c r="${cellRef}" t="inlineStr"><is><t>${xmlEscape(value)}</t></is></c>`
+        })
+        .join('')
+      return `<row r="${rowIndex + 1}">${cellXml}</row>`
+    })
+    .join('')
+
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetViews><sheetView workbookViewId="0"/></sheetViews>
+  <sheetFormatPr defaultRowHeight="18"/>
+  <sheetData>${rowXml}</sheetData>
+</worksheet>`
+}
+
+function downloadXlsx(filename: string, rows: CsvRow[]) {
+  if (rows.length === 0) {
+    return
+  }
+
+  const workbookFiles = {
+    '[Content_Types].xml': strToU8(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+  <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+</Types>`),
+    '_rels/.rels': strToU8(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+</Relationships>`),
+    'xl/workbook.xml': strToU8(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+  xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets>
+    <sheet name="Report" sheetId="1" r:id="rId1"/>
+  </sheets>
+</workbook>`),
+    'xl/_rels/workbook.xml.rels': strToU8(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+</Relationships>`),
+    'xl/worksheets/sheet1.xml': strToU8(worksheetXml(rows)),
+  }
+
+  const blob = new Blob([zipSync(workbookFiles)], {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  link.click()
+  URL.revokeObjectURL(url)
+}
+
+function formatPdfCell(value: string | number | boolean | null | undefined) {
+  return String(value ?? '').replace(/\s+/g, ' ').trim()
+}
+
+function downloadPdf(filename: string, title: string, rows: CsvRow[]) {
+  if (rows.length === 0) {
+    return
+  }
+
+  const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' })
+  const headers = Object.keys(rows[0])
+  const pageWidth = doc.internal.pageSize.getWidth()
+  const pageHeight = doc.internal.pageSize.getHeight()
+  const margin = 34
+  const usableWidth = pageWidth - margin * 2
+  const columnWidth = usableWidth / headers.length
+  let y = 42
+
+  const drawHeader = () => {
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(14)
+    doc.text(title, margin, y)
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(8)
+    doc.text(`CampusOps AI / Generated ${new Date().toLocaleString()}`, margin, y + 15)
+    y += 38
+    doc.setFillColor(241, 245, 249)
+    doc.rect(margin, y - 13, usableWidth, 22, 'F')
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(7)
+    headers.forEach((header, index) => {
+      doc.text(header.slice(0, 24), margin + index * columnWidth + 4, y)
+    })
+    y += 18
+  }
+
+  drawHeader()
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(7)
+
+  rows.forEach((row) => {
+    if (y > pageHeight - 34) {
+      doc.addPage()
+      y = 42
+      drawHeader()
+      doc.setFont('helvetica', 'normal')
+      doc.setFontSize(7)
+    }
+
+    headers.forEach((header, index) => {
+      const text = formatPdfCell(row[header])
+      const lines = doc.splitTextToSize(text || '-', Math.max(columnWidth - 8, 32)).slice(0, 2)
+      doc.text(lines, margin + index * columnWidth + 4, y)
+    })
+    y += 24
+  })
+
+  doc.save(filename)
+}
+
 function dateStamp() {
   return new Date().toISOString().slice(0, 10)
 }
@@ -179,7 +336,7 @@ function ReportTable<T extends object>({
   rows: T[]
   columns: Column<T>[]
   emptyMessage: string
-  onExport: () => void
+  onExport: (format: ExportFormat) => void
 }) {
   return (
     <section className="panel report-panel">
@@ -189,9 +346,17 @@ function ReportTable<T extends object>({
           <h2>{title}</h2>
         </div>
         <div className="report-panel-actions">
-          <button type="button" className="secondary-action" disabled={rows.length === 0} onClick={onExport}>
+          <button type="button" className="secondary-action" disabled={rows.length === 0} onClick={() => onExport('csv')}>
             <Download size={15} />
             <span>CSV</span>
+          </button>
+          <button type="button" className="secondary-action" disabled={rows.length === 0} onClick={() => onExport('xlsx')}>
+            <FileSpreadsheet size={15} />
+            <span>XLSX</span>
+          </button>
+          <button type="button" className="secondary-action" disabled={rows.length === 0} onClick={() => onExport('pdf')}>
+            <FileText size={15} />
+            <span>PDF</span>
           </button>
           <Icon size={20} />
         </div>
@@ -321,13 +486,21 @@ export function ReportsCenter({ currentRole, actorId, userName, onAuditEvent }: 
     onAuditEvent(makeAudit(userName, action, outcome, 'info'))
   }
 
-  const exportRows = (reportName: string, rows: CsvRow[]) => {
+  const exportRows = (reportName: string, rows: CsvRow[], format: ExportFormat) => {
     if (rows.length === 0) {
       return
     }
 
-    downloadCsv(`campusops-${reportName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${dateStamp()}.csv`, rows)
-    void auditReportAction('Exported report', reportName, `${reportName} exported as CSV.`)
+    const filenameBase = `campusops-${reportName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${dateStamp()}`
+    if (format === 'csv') {
+      downloadCsv(`${filenameBase}.csv`, rows)
+    } else if (format === 'xlsx') {
+      downloadXlsx(`${filenameBase}.xlsx`, rows)
+    } else {
+      downloadPdf(`${filenameBase}.pdf`, reportName, rows)
+    }
+
+    void auditReportAction('Exported report', reportName, `${reportName} exported as ${format.toUpperCase()}.`)
   }
 
   const refreshReports = () => {
@@ -475,7 +648,7 @@ export function ReportsCenter({ currentRole, actorId, userName, onAuditEvent }: 
             icon={AlertTriangle}
             rows={visibleAttendance}
             emptyMessage="No students match the shortage filters."
-            onExport={() => exportRows('Attendance shortage', visibleAttendance)}
+            onExport={(format) => exportRows('Attendance shortage', visibleAttendance, format)}
             columns={[
               {
                 header: 'Student',
@@ -501,7 +674,7 @@ export function ReportsCenter({ currentRole, actorId, userName, onAuditEvent }: 
           icon={CalendarClock}
           rows={visibleLeaves}
           emptyMessage="No leave requests match the current filters."
-          onExport={() => exportRows('Pending leave', visibleLeaves)}
+          onExport={(format) => exportRows('Pending leave', visibleLeaves, format)}
           columns={[
             {
               header: 'Request',
@@ -533,7 +706,7 @@ export function ReportsCenter({ currentRole, actorId, userName, onAuditEvent }: 
           icon={UsersRound}
           rows={visibleWorkload}
           emptyMessage="No faculty workload rows match the current filters."
-          onExport={() => exportRows('Faculty workload', visibleWorkload)}
+          onExport={(format) => exportRows('Faculty workload', visibleWorkload, format)}
           columns={[
             {
               header: 'Faculty',
@@ -560,7 +733,7 @@ export function ReportsCenter({ currentRole, actorId, userName, onAuditEvent }: 
               icon={BookOpenCheck}
               rows={visibleCoverage}
               emptyMessage="No coverage rows match the current filters."
-              onExport={() => exportRows('Subject coverage', visibleCoverage)}
+              onExport={(format) => exportRows('Subject coverage', visibleCoverage, format)}
               columns={[
                 {
                   header: 'Department',
@@ -584,7 +757,7 @@ export function ReportsCenter({ currentRole, actorId, userName, onAuditEvent }: 
               icon={Filter}
               rows={visibleInactive}
               emptyMessage="No inactive departments or subjects match the current filters."
-              onExport={() => exportRows('Inactive master data', visibleInactive)}
+              onExport={(format) => exportRows('Inactive master data', visibleInactive, format)}
               columns={[
                 { header: 'Type', render: (row) => row.type },
                 {
@@ -608,7 +781,7 @@ export function ReportsCenter({ currentRole, actorId, userName, onAuditEvent }: 
               icon={BellRing}
               rows={visibleCirculars}
               emptyMessage="No circular engagement rows match the current filters."
-              onExport={() => exportRows('Circular engagement', visibleCirculars)}
+              onExport={(format) => exportRows('Circular engagement', visibleCirculars, format)}
               columns={[
                 {
                   header: 'Circular',
@@ -635,7 +808,7 @@ export function ReportsCenter({ currentRole, actorId, userName, onAuditEvent }: 
           icon={Database}
           rows={visibleSummary}
           emptyMessage="No daily summary matches the current search."
-          onExport={() => exportRows('Daily operations summary', summaryToRows(reports.dailySummary))}
+          onExport={(format) => exportRows('Daily operations summary', summaryToRows(reports.dailySummary), format)}
           columns={[
             { header: 'Date', render: (row) => row.date },
             { header: 'Marked', align: 'right', render: (row) => row.markedAttendanceCount },

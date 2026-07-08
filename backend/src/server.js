@@ -1,5 +1,6 @@
 import { createServer } from 'node:http'
 import {
+  createAuthSession,
   createAuditEvent,
   createDepartment,
   createCircular,
@@ -8,8 +9,11 @@ import {
   createReportAuditEvent,
   createStaffProfile,
   createSubject,
+  deleteAuthSession,
   getAcademicState,
   getAuditEvents,
+  getAuthSession,
+  getAuthUsers,
   getCircularState,
   getDatabaseInfo,
   getDepartments,
@@ -42,7 +46,7 @@ function sendJson(response, statusCode, payload) {
     'Content-Type': 'application/json; charset=utf-8',
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET,POST,PUT,OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
   })
   response.end(JSON.stringify(payload))
 }
@@ -66,11 +70,44 @@ function validationError(response, errors) {
   })
 }
 
+function unauthorized(response) {
+  sendJson(response, 401, {
+    error: 'Authentication required',
+  })
+}
+
+function forbidden(response) {
+  sendJson(response, 403, {
+    error: 'Insufficient role permissions',
+  })
+}
+
 function serverError(response, error) {
   sendJson(response, 500, {
     error: 'Server error',
     detail: error instanceof Error ? error.message : 'Unknown error',
   })
+}
+
+function getBearerToken(request) {
+  const header = request.headers.authorization ?? ''
+  const match = header.match(/^Bearer\s+(.+)$/i)
+  return match?.[1] ?? ''
+}
+
+function requireRoles(request, response, allowedRoles) {
+  const session = getAuthSession(getBearerToken(request))
+  if (!session) {
+    unauthorized(response)
+    return null
+  }
+
+  if (!allowedRoles.includes(session.user.role)) {
+    forbidden(response)
+    return null
+  }
+
+  return session
 }
 
 function readJson(request) {
@@ -99,10 +136,70 @@ function readJson(request) {
   })
 }
 
+async function handleAuth(request, response, pathname) {
+  if (pathname === '/api/auth/users') {
+    if (request.method !== 'GET') {
+      methodNotAllowed(response)
+      return
+    }
+
+    sendJson(response, 200, {
+      users: getAuthUsers(),
+    })
+    return
+  }
+
+  if (pathname === '/api/auth/login') {
+    if (request.method !== 'POST') {
+      methodNotAllowed(response)
+      return
+    }
+
+    sendJson(response, 201, {
+      session: createAuthSession(await readJson(request)),
+    })
+    return
+  }
+
+  if (pathname === '/api/auth/session') {
+    if (request.method !== 'GET') {
+      methodNotAllowed(response)
+      return
+    }
+
+    const session = getAuthSession(getBearerToken(request))
+    if (!session) {
+      unauthorized(response)
+      return
+    }
+
+    sendJson(response, 200, {
+      session,
+    })
+    return
+  }
+
+  if (pathname === '/api/auth/logout') {
+    if (request.method !== 'POST') {
+      methodNotAllowed(response)
+      return
+    }
+
+    sendJson(response, 200, deleteAuthSession(getBearerToken(request)))
+    return
+  }
+
+  notFound(response)
+}
+
 async function handleMasterData(request, response, pathname) {
   if (pathname === '/api/master-data') {
     if (request.method !== 'GET') {
       methodNotAllowed(response)
+      return
+    }
+
+    if (!requireRoles(request, response, ['admin', 'faculty'])) {
       return
     }
 
@@ -116,12 +213,20 @@ async function handleMasterData(request, response, pathname) {
       return
     }
 
+    if (!requireRoles(request, response, ['admin'])) {
+      return
+    }
+
     sendJson(response, 200, resetMasterData())
     return
   }
 
   if (pathname === '/api/departments') {
     if (request.method === 'GET') {
+      if (!requireRoles(request, response, ['admin', 'faculty'])) {
+        return
+      }
+
       sendJson(response, 200, {
         departments: getDepartments(),
       })
@@ -129,6 +234,10 @@ async function handleMasterData(request, response, pathname) {
     }
 
     if (request.method === 'POST') {
+      if (!requireRoles(request, response, ['admin'])) {
+        return
+      }
+
       const draft = cleanDepartment(await readJson(request))
       const errors = validateDepartmentDraft(draft, getDepartments())
       if (errors.length > 0) {
@@ -150,6 +259,10 @@ async function handleMasterData(request, response, pathname) {
   if (departmentMatch) {
     if (request.method !== 'PUT') {
       methodNotAllowed(response)
+      return
+    }
+
+    if (!requireRoles(request, response, ['admin'])) {
       return
     }
 
@@ -175,6 +288,10 @@ async function handleMasterData(request, response, pathname) {
 
   if (pathname === '/api/subjects') {
     if (request.method === 'GET') {
+      if (!requireRoles(request, response, ['admin', 'faculty'])) {
+        return
+      }
+
       sendJson(response, 200, {
         subjects: getSubjects(),
       })
@@ -182,6 +299,10 @@ async function handleMasterData(request, response, pathname) {
     }
 
     if (request.method === 'POST') {
+      if (!requireRoles(request, response, ['admin'])) {
+        return
+      }
+
       const draft = cleanSubject(await readJson(request))
       const errors = validateSubjectDraft(draft, getDepartments(), getSubjects())
       if (errors.length > 0) {
@@ -203,6 +324,10 @@ async function handleMasterData(request, response, pathname) {
   if (subjectMatch) {
     if (request.method !== 'PUT') {
       methodNotAllowed(response)
+      return
+    }
+
+    if (!requireRoles(request, response, ['admin'])) {
       return
     }
 
@@ -290,6 +415,10 @@ async function handleStaff(request, response, pathname) {
       return
     }
 
+    if (!requireRoles(request, response, ['admin', 'faculty'])) {
+      return
+    }
+
     sendJson(response, 200, getStaffState())
     return
   }
@@ -297,6 +426,10 @@ async function handleStaff(request, response, pathname) {
   if (pathname === '/api/staff-profiles') {
     if (request.method !== 'POST') {
       methodNotAllowed(response)
+      return
+    }
+
+    if (!requireRoles(request, response, ['admin'])) {
       return
     }
 
@@ -310,6 +443,10 @@ async function handleStaff(request, response, pathname) {
   if (staffProfileMatch) {
     if (request.method !== 'PUT') {
       methodNotAllowed(response)
+      return
+    }
+
+    if (!requireRoles(request, response, ['admin'])) {
       return
     }
 
@@ -332,6 +469,10 @@ async function handleStaff(request, response, pathname) {
       return
     }
 
+    if (!requireRoles(request, response, ['admin'])) {
+      return
+    }
+
     sendJson(response, 200, resetStaffData())
     return
   }
@@ -346,6 +487,10 @@ async function handleCirculars(request, response, pathname) {
       return
     }
 
+    if (!requireRoles(request, response, ['admin', 'faculty', 'student'])) {
+      return
+    }
+
     sendJson(response, 200, getCircularState())
     return
   }
@@ -353,6 +498,10 @@ async function handleCirculars(request, response, pathname) {
   if (pathname === '/api/circulars') {
     if (request.method !== 'POST') {
       methodNotAllowed(response)
+      return
+    }
+
+    if (!requireRoles(request, response, ['admin'])) {
       return
     }
 
@@ -368,6 +517,10 @@ async function handleCirculars(request, response, pathname) {
       return
     }
 
+    if (!requireRoles(request, response, ['admin', 'faculty', 'student'])) {
+      return
+    }
+
     sendJson(response, 201, {
       readReceipt: createCircularReadReceipt(await readJson(request)),
     })
@@ -377,6 +530,10 @@ async function handleCirculars(request, response, pathname) {
   if (pathname === '/api/circular-read-receipts/bulk') {
     if (request.method !== 'POST') {
       methodNotAllowed(response)
+      return
+    }
+
+    if (!requireRoles(request, response, ['admin', 'faculty', 'student'])) {
       return
     }
 
@@ -390,6 +547,10 @@ async function handleCirculars(request, response, pathname) {
   if (pathname === '/api/circular-state/reset') {
     if (request.method !== 'POST') {
       methodNotAllowed(response)
+      return
+    }
+
+    if (!requireRoles(request, response, ['admin'])) {
       return
     }
 
@@ -418,13 +579,22 @@ async function handleReports(request, response, pathname, searchParams) {
       return
     }
 
-    sendJson(response, 200, getReports(readReportFilters(searchParams)))
+    const session = requireRoles(request, response, ['admin', 'faculty'])
+    if (!session) {
+      return
+    }
+
+    sendJson(response, 200, getReports({ ...readReportFilters(searchParams), role: session.user.role, actorId: session.user.actorId }))
     return
   }
 
   if (pathname === '/api/reports/actions') {
     if (request.method !== 'POST') {
       methodNotAllowed(response)
+      return
+    }
+
+    if (!requireRoles(request, response, ['admin', 'faculty'])) {
       return
     }
 
@@ -441,7 +611,16 @@ async function handleReports(request, response, pathname, searchParams) {
       return
     }
 
-    sendJson(response, 200, getReportByName(decodeURIComponent(reportMatch[1]), readReportFilters(searchParams)))
+    const session = requireRoles(request, response, ['admin', 'faculty'])
+    if (!session) {
+      return
+    }
+
+    sendJson(response, 200, getReportByName(decodeURIComponent(reportMatch[1]), {
+      ...readReportFilters(searchParams),
+      role: session.user.role,
+      actorId: session.user.actorId,
+    }))
     return
   }
 
@@ -455,7 +634,7 @@ const server = createServer(async (request, response) => {
     response.writeHead(204, {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET,POST,PUT,OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
     })
     response.end()
     return
@@ -472,6 +651,11 @@ const server = createServer(async (request, response) => {
         service: 'CampusOps AI backend',
         database: getDatabaseInfo(),
       })
+      return
+    }
+
+    if (pathname.startsWith('/api/auth')) {
+      await handleAuth(request, response, pathname)
       return
     }
 

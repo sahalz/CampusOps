@@ -233,6 +233,39 @@ const seedCircularReadReceipts = [
   ['CIR-2026-074', 's-aisha', '04:24 PM'],
 ]
 
+const seedAuthUsers = [
+  [
+    'admin-office',
+    'admin',
+    'Dr. Priya Menon',
+    'Academic Admin',
+    'admin@campus.edu',
+    'admin-office',
+    'Setup, imports, timetable mapping, reports, audits, and all approvals.',
+    'active',
+  ],
+  [
+    'faculty-anjali',
+    'faculty',
+    'Prof. Anjali Rao',
+    'Faculty',
+    'anjali.rao@campus.edu',
+    't-anjali',
+    'Daily periods, attendance register, assigned leave approvals, and class workload.',
+    'active',
+  ],
+  [
+    'student-aisha',
+    'student',
+    'Aisha Khan',
+    'Student',
+    'aisha.khan@campus.edu',
+    's-aisha',
+    "Today's timetable, attendance status, leave application, and request tracking.",
+    'active',
+  ],
+]
+
 db.exec(`
   PRAGMA foreign_keys = ON;
   PRAGMA journal_mode = WAL;
@@ -271,6 +304,26 @@ db.exec(`
     outcome TEXT NOT NULL,
     severity TEXT NOT NULL CHECK (severity IN ('info', 'success', 'warning', 'critical')),
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS auth_users (
+    id TEXT PRIMARY KEY,
+    role TEXT NOT NULL CHECK (role IN ('student', 'faculty', 'admin')),
+    name TEXT NOT NULL,
+    title TEXT NOT NULL,
+    email TEXT NOT NULL UNIQUE,
+    actor_id TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('active', 'inactive')),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS auth_sessions (
+    token TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES auth_users(id) ON UPDATE CASCADE ON DELETE CASCADE,
+    created_at TEXT NOT NULL,
+    last_seen_at TEXT NOT NULL
   );
 
   CREATE TABLE IF NOT EXISTS academic_teachers (
@@ -479,6 +532,11 @@ const insertCircularReadReceiptStatement = db.prepare(`
   VALUES (?, ?, ?)
 `)
 
+const insertAuthUserStatement = db.prepare(`
+  INSERT INTO auth_users (id, role, name, title, email, actor_id, summary, status)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+`)
+
 function seedIfNeeded() {
   const departmentCount = db.prepare('SELECT COUNT(*) AS count FROM departments').get().count
   const subjectCount = db.prepare('SELECT COUNT(*) AS count FROM subjects').get().count
@@ -511,6 +569,11 @@ function seedIfNeeded() {
   if (circularCount === 0) {
     seedCirculars.forEach((circular) => insertCircularStatement.run(...circular))
     seedCircularReadReceipts.forEach((receipt) => insertCircularReadReceiptStatement.run(...receipt))
+  }
+
+  const authUserCount = db.prepare('SELECT COUNT(*) AS count FROM auth_users').get().count
+  if (authUserCount === 0) {
+    seedAuthUsers.forEach((user) => insertAuthUserStatement.run(...user))
   }
 }
 
@@ -720,6 +783,136 @@ export function createAuditEvent(event) {
   )
 
   return auditEvent
+}
+
+function rowToAuthUser(row) {
+  return {
+    id: row.id,
+    role: row.role,
+    name: row.name,
+    title: row.title,
+    email: row.email,
+    actorId: row.actorId,
+    summary: row.summary,
+    status: row.status,
+  }
+}
+
+export function getAuthUsers() {
+  return db
+    .prepare(`
+      SELECT
+        id,
+        role,
+        name,
+        title,
+        email,
+        actor_id AS actorId,
+        summary,
+        status
+      FROM auth_users
+      WHERE status = 'active'
+      ORDER BY
+        CASE role
+          WHEN 'admin' THEN 1
+          WHEN 'faculty' THEN 2
+          ELSE 3
+        END,
+        name
+    `)
+    .all()
+    .map(rowToAuthUser)
+}
+
+export function getAuthUserById(id) {
+  const row = db
+    .prepare(`
+      SELECT
+        id,
+        role,
+        name,
+        title,
+        email,
+        actor_id AS actorId,
+        summary,
+        status
+      FROM auth_users
+      WHERE id = ?
+    `)
+    .get(String(id ?? ''))
+
+  return row ? rowToAuthUser(row) : null
+}
+
+export function createAuthSession(input) {
+  const accountId = String(input?.accountId ?? input?.id ?? '').trim()
+  const user = getAuthUserById(accountId)
+
+  if (!user || user.status !== 'active') {
+    throw new Error('Active user account was not found.')
+  }
+
+  const token = `cos_${randomUUID()}`
+  const timestamp = new Date().toISOString()
+  db.prepare(`
+    INSERT INTO auth_sessions (token, user_id, created_at, last_seen_at)
+    VALUES (?, ?, ?, ?)
+  `).run(token, user.id, timestamp, timestamp)
+
+  createAuditEvent({
+    actor: user.name,
+    action: 'Started session',
+    outcome: `${user.title} workspace opened with backend RBAC session.`,
+    severity: 'success',
+  })
+
+  return {
+    token,
+    user,
+  }
+}
+
+export function getAuthSession(token) {
+  const cleanToken = String(token ?? '').trim()
+  if (!cleanToken) {
+    return null
+  }
+
+  const row = db
+    .prepare(`
+      SELECT
+        s.token,
+        u.id,
+        u.role,
+        u.name,
+        u.title,
+        u.email,
+        u.actor_id AS actorId,
+        u.summary,
+        u.status
+      FROM auth_sessions s
+      JOIN auth_users u ON u.id = s.user_id
+      WHERE s.token = ?
+    `)
+    .get(cleanToken)
+
+  if (!row || row.status !== 'active') {
+    return null
+  }
+
+  db.prepare('UPDATE auth_sessions SET last_seen_at = ? WHERE token = ?').run(new Date().toISOString(), cleanToken)
+
+  return {
+    token: row.token,
+    user: rowToAuthUser(row),
+  }
+}
+
+export function deleteAuthSession(token) {
+  const result = db.prepare('DELETE FROM auth_sessions WHERE token = ?').run(String(token ?? '').trim())
+  return {
+    removed: result.changes > 0,
+  }
 }
 
 export function getAcademicState() {
@@ -1725,6 +1918,11 @@ export function getReports(filters = {}) {
   const inactiveMasterData = getInactiveMasterDataReport(context, cleanFilters)
   const circularEngagement = getCircularEngagementReport(context, cleanFilters)
   const dailySummary = getDailyOperationsSummary(context, cleanFilters)
+  const facultyLimited = cleanFilters.role === 'faculty'
+  const visibleAttendanceShortage = facultyLimited ? [] : attendanceShortage
+  const visibleDepartmentSubjectCoverage = facultyLimited ? [] : departmentSubjectCoverage
+  const visibleInactiveMasterData = facultyLimited ? [] : inactiveMasterData
+  const visibleCircularEngagement = facultyLimited ? [] : circularEngagement
 
   return {
     version: 1,
@@ -1733,20 +1931,20 @@ export function getReports(filters = {}) {
     filters: cleanFilters,
     filterOptions: getReportFilterOptions(context),
     kpis: {
-      attendanceShortage: attendanceShortage.length,
+      attendanceShortage: visibleAttendanceShortage.length,
       pendingLeaves: pendingLeave.filter((leave) => leave.status === 'pending').length,
       overloadedFaculty: facultyWorkload.filter((teacher) => teacher.loadStatus === 'overloaded').length,
-      unmappedCoverageRows: departmentSubjectCoverage.filter((row) => row.unmappedSubjects > 0).length,
-      inactiveRecords: inactiveMasterData.length,
-      unreadCirculars: circularEngagement.reduce((total, row) => total + row.unreadCount, 0),
+      unmappedCoverageRows: visibleDepartmentSubjectCoverage.filter((row) => row.unmappedSubjects > 0).length,
+      inactiveRecords: visibleInactiveMasterData.length,
+      unreadCirculars: visibleCircularEngagement.reduce((total, row) => total + row.unreadCount, 0),
       markedAttendanceToday: dailySummary.markedAttendanceCount,
     },
-    attendanceShortage,
+    attendanceShortage: visibleAttendanceShortage,
     pendingLeave,
     facultyWorkload,
-    departmentSubjectCoverage,
-    inactiveMasterData,
-    circularEngagement,
+    departmentSubjectCoverage: visibleDepartmentSubjectCoverage,
+    inactiveMasterData: visibleInactiveMasterData,
+    circularEngagement: visibleCircularEngagement,
     dailySummary,
   }
 }
@@ -1799,6 +1997,8 @@ export function getDatabaseInfo() {
     staffProfiles: db.prepare('SELECT COUNT(*) AS count FROM staff_profiles').get().count,
     circulars: db.prepare('SELECT COUNT(*) AS count FROM circulars').get().count,
     circularReadReceipts: db.prepare('SELECT COUNT(*) AS count FROM circular_read_receipts').get().count,
+    users: db.prepare('SELECT COUNT(*) AS count FROM auth_users').get().count,
+    activeSessions: db.prepare('SELECT COUNT(*) AS count FROM auth_sessions').get().count,
     auditEvents: db.prepare('SELECT COUNT(*) AS count FROM audit_events').get().count,
   }
 }
