@@ -26,6 +26,7 @@ import {
   Send,
   ShieldCheck,
   Sparkles,
+  UploadCloud,
   UserCheck,
   UserRound,
   X,
@@ -64,6 +65,9 @@ const StaffRegister = lazy(() =>
 )
 const MasterDataCenter = lazy(() =>
   import('./components/master-data/MasterDataCenter').then((module) => ({ default: module.MasterDataCenter })),
+)
+const ImportCenter = lazy(() =>
+  import('./components/imports/ImportCenter').then((module) => ({ default: module.ImportCenter })),
 )
 const ReportsCenter = lazy(() =>
   import('./components/reports/ReportsCenter').then((module) => ({ default: module.ReportsCenter })),
@@ -237,6 +241,13 @@ function App() {
           icon: School,
           roles: ['admin', 'faculty'] as Role[],
           targetId: 'section-master-data',
+        },
+        {
+          id: 'imports',
+          label: 'Imports',
+          icon: UploadCloud,
+          roles: ['admin'] as Role[],
+          targetId: 'section-imports',
         },
         {
           id: 'reports',
@@ -623,6 +634,26 @@ function App() {
               <MasterDataCenter
                 currentRole={session.role}
                 actorId={session.actorId}
+                userName={session.name}
+                onAuditEvent={appendAuditEvent}
+              />
+            </Suspense>
+          </div>
+        ) : null}
+
+        {activeRole === 'admin' ? (
+          <div id="section-imports" className="section-anchor">
+            <Suspense
+              fallback={
+                <div className="import-loading">
+                  <UploadCloud size={18} />
+                  <strong>Loading import center</strong>
+                  <span>Preparing CSV and XLSX import validation.</span>
+                </div>
+              }
+            >
+              <ImportCenter
+                currentRole={session.role}
                 userName={session.name}
                 onAuditEvent={appendAuditEvent}
               />

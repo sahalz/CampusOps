@@ -19,7 +19,9 @@ CampusOps/
 - SQLite-backed academic operations: classes, teachers, students, subjects, timetable, attendance, leave requests, approvals
 - Departments and subjects master data with SQLite-backed persistence
 - Staff register, admin circulars, and circular read receipts with SQLite-backed persistence
+- Admin Import Center for CSV/XLSX students, staff, subjects, and timetable uploads with preview validation
 - Admin Reports and Export Center for attendance shortage, pending leave, workload, subject coverage, inactive records, circular engagement, and daily operations
+- Rejected import rows can be exported as CSV or XLSX for office correction
 - Report exports in CSV, PDF, and XLSX formats with audit events
 - Audit trail persistence through the backend
 - Local AI routing simulator with guardrails and workflow visualization
@@ -59,6 +61,7 @@ The project is designed for a reliable college presentation and a realistic adop
 - The frontend is professional, responsive, and role-aware.
 - The backend uses local SQLite, so the demo works without internet or paid services.
 - Users, sessions, academic operations, master data, staff profiles, circulars, read receipts, reports, and audit logs are persisted outside the browser.
+- Admin imports validate and commit accepted rows through SQLite-backed APIs before changing operational data.
 - Browser localStorage remains as a fallback so the demo can continue if the backend is temporarily offline.
 - The structure can later evolve to PostgreSQL/Supabase without rewriting the UI.
 
@@ -75,4 +78,4 @@ Use the Admin account first:
 - `Dr. Priya Menon`
 - Role: Admin
 
-Open Reports after Master Data to show CSV, PDF, and XLSX export, print-friendly reporting, and the SQLite sync status. Then switch to Faculty and Student to show role-specific views.
+Open Imports after Master Data to show CSV/XLSX templates, preview validation, rejected-row exports, and SQLite commit. Then open Reports to show CSV, PDF, and XLSX export, print-friendly reporting, and the SQLite sync status before switching to Faculty and Student role views.

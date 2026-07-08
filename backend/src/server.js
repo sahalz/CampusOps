@@ -9,6 +9,7 @@ import {
   createReportAuditEvent,
   createStaffProfile,
   createSubject,
+  commitImportRows,
   deleteAuthSession,
   getAcademicState,
   getAuditEvents,
@@ -22,6 +23,7 @@ import {
   getReports,
   getStaffState,
   getSubjects,
+  previewImportRows,
   resetAcademicData,
   resetCircularData,
   resetMasterData,
@@ -115,7 +117,7 @@ function readJson(request) {
     let body = ''
     request.on('data', (chunk) => {
       body += chunk
-      if (body.length > 1_000_000) {
+      if (body.length > 5_000_000) {
         request.destroy()
         reject(new Error('Request body is too large.'))
       }
@@ -627,6 +629,41 @@ async function handleReports(request, response, pathname, searchParams) {
   notFound(response)
 }
 
+async function handleImports(request, response, pathname) {
+  if (pathname === '/api/import/preview') {
+    if (request.method !== 'POST') {
+      methodNotAllowed(response)
+      return
+    }
+
+    if (!requireRoles(request, response, ['admin'])) {
+      return
+    }
+
+    const payload = await readJson(request)
+    sendJson(response, 200, previewImportRows(payload.kind, payload.rows))
+    return
+  }
+
+  if (pathname === '/api/import/commit') {
+    if (request.method !== 'POST') {
+      methodNotAllowed(response)
+      return
+    }
+
+    const session = requireRoles(request, response, ['admin'])
+    if (!session) {
+      return
+    }
+
+    const payload = await readJson(request)
+    sendJson(response, 200, commitImportRows(payload.kind, payload.rows, session.user.name))
+    return
+  }
+
+  notFound(response)
+}
+
 const server = createServer(async (request, response) => {
   response.setHeader('Access-Control-Allow-Origin', '*')
 
@@ -689,6 +726,11 @@ const server = createServer(async (request, response) => {
 
     if (pathname.startsWith('/api/reports')) {
       await handleReports(request, response, pathname, searchParams)
+      return
+    }
+
+    if (pathname.startsWith('/api/import')) {
+      await handleImports(request, response, pathname)
       return
     }
 

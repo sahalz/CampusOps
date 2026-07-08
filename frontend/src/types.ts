@@ -423,3 +423,36 @@ export type ReportsPayload = {
   circularEngagement: CircularEngagementReportRow[]
   dailySummary: DailyOperationsSummary
 }
+
+export type ImportKind = 'students' | 'staff' | 'subjects' | 'timetable'
+
+export type ImportCellValue = string | number | boolean | null | undefined
+
+export type ImportSourceRow = Record<string, ImportCellValue>
+
+export type ImportPreviewRow = {
+  rowNumber: number
+  data: ImportSourceRow
+  errors: string[]
+  action: 'create' | 'update'
+  normalized: ImportSourceRow
+}
+
+export type ImportPreviewPayload = {
+  version: 1
+  kind: ImportKind
+  totalRows: number
+  validRows: ImportPreviewRow[]
+  invalidRows: ImportPreviewRow[]
+  summary: {
+    valid: number
+    invalid: number
+    creates: number
+    updates: number
+  }
+}
+
+export type ImportCommitPayload = ImportPreviewPayload & {
+  importedRows: number
+  auditEvent: AuditEvent
+}

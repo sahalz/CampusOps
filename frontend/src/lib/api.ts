@@ -6,6 +6,10 @@ import type {
   Circular,
   CircularReadReceipt,
   CircularState,
+  ImportCommitPayload,
+  ImportKind,
+  ImportPreviewPayload,
+  ImportSourceRow,
   LeaveRequest,
   MasterDepartment,
   MasterSubject,
@@ -309,6 +313,28 @@ export async function recordReportActionOnServer(action: ReportActionInput) {
     body: JSON.stringify(action),
   })
   return response.auditEvent
+}
+
+export function previewImportOnServer(kind: ImportKind, rows: ImportSourceRow[]) {
+  return requestJson<ImportPreviewPayload>(
+    '/import/preview',
+    {
+      method: 'POST',
+      body: JSON.stringify({ kind, rows }),
+    },
+    8000,
+  )
+}
+
+export function commitImportOnServer(kind: ImportKind, rows: ImportSourceRow[]) {
+  return requestJson<ImportCommitPayload>(
+    '/import/commit',
+    {
+      method: 'POST',
+      body: JSON.stringify({ kind, rows }),
+    },
+    12000,
+  )
 }
 
 export async function fetchAuditEvents() {

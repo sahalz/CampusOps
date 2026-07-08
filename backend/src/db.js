@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { randomUUID } from 'node:crypto'
 import { DatabaseSync } from 'node:sqlite'
-import { normalizeValue, slugify } from './validation.js'
+import { masterDataStatuses, normalizeValue, slugify, subjectKinds } from './validation.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const dataDir = join(__dirname, '..', 'data')
@@ -1486,6 +1486,577 @@ function normalizeReportFilters(filters = {}) {
     status: safeString(filters.status) || 'all',
     role: safeString(filters.role) || 'admin',
     actorId: safeString(filters.actorId),
+  }
+}
+
+const importKinds = new Set(['students', 'staff', 'subjects', 'timetable'])
+const academicDays = new Set(['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'])
+
+function importKey(value) {
+  return normalizeValue(value).replace(/[^a-z0-9]/g, '')
+}
+
+function makeImportId(prefix, value) {
+  return `${prefix}-${slugify(value) || randomUUID().slice(0, 8)}`
+}
+
+function readImportField(row, aliases) {
+  const fields = new Map(
+    Object.entries(row ?? {}).map(([key, value]) => [importKey(key), value]),
+  )
+  const aliasKeys = aliases.map(importKey)
+  const foundAlias = aliasKeys.find((alias) => fields.has(alias))
+  return foundAlias ? safeString(fields.get(foundAlias)) : ''
+}
+
+function parseImportInteger(value) {
+  const parsed = Number(value)
+  return Number.isInteger(parsed) ? parsed : Number.NaN
+}
+
+function isImportEmail(value) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
+}
+
+function normalizeImportStatus(value, allowed, fallback) {
+  const normalized = normalizeValue(value).replace(/[\s-]+/g, '_')
+  return allowed.has(normalized) ? normalized : fallback
+}
+
+function makeImportContext() {
+  const academic = getAcademicState()
+  const departments = getDepartments()
+  const masterSubjects = getSubjects()
+  const staffProfiles = getStaffProfiles()
+
+  const classByKey = new Map()
+  academic.classSections.forEach((section) => {
+    ;[section.id, section.name].forEach((key) => classByKey.set(importKey(key), section))
+  })
+
+  const teacherByKey = new Map()
+  academic.teachers.forEach((teacher) => {
+    ;[teacher.id, teacher.email, teacher.name].forEach((key) => teacherByKey.set(importKey(key), teacher))
+  })
+
+  const academicSubjectByKey = new Map()
+  academic.subjects.forEach((subject) => {
+    ;[subject.id, subject.code, subject.name].forEach((key) => academicSubjectByKey.set(importKey(key), subject))
+  })
+
+  const departmentByKey = new Map()
+  departments.forEach((department) => {
+    ;[department.id, department.code, department.name].forEach((key) => departmentByKey.set(importKey(key), department))
+  })
+
+  const masterSubjectByCode = new Map(masterSubjects.map((subject) => [importKey(subject.code), subject]))
+  const studentByRoll = new Map(academic.students.map((student) => [importKey(student.rollNo), student]))
+  const staffByEmployeeCode = new Map(staffProfiles.map((staff) => [importKey(staff.employeeCode), staff]))
+  const staffByEmail = new Map(staffProfiles.map((staff) => [importKey(staff.email), staff]))
+  const academicSubjectByCode = new Map(academic.subjects.map((subject) => [importKey(subject.code), subject]))
+  const timetableById = new Map(academic.slots.map((slot) => [slot.id, slot]))
+
+  return {
+    academic,
+    departments,
+    masterSubjects,
+    classByKey,
+    teacherByKey,
+    academicSubjectByKey,
+    departmentByKey,
+    masterSubjectByCode,
+    studentByRoll,
+    staffByEmployeeCode,
+    staffByEmail,
+    academicSubjectByCode,
+    timetableById,
+  }
+}
+
+function validateImportStudent(row, rowNumber, context) {
+  const rollNo = readImportField(row, ['rollNo', 'roll no', 'roll number', 'student roll']).toUpperCase()
+  const name = readImportField(row, ['name', 'student name']).replace(/\s+/g, ' ')
+  const classValue = readImportField(row, ['classSection', 'class section', 'class', 'section'])
+  const email = readImportField(row, ['email', 'student email']).toLowerCase()
+  const classSection = context.classByKey.get(importKey(classValue))
+  const errors = []
+
+  if (rollNo.length < 2) {
+    errors.push('Roll No is required.')
+  }
+  if (name.length < 3) {
+    errors.push('Student name must be at least 3 characters.')
+  }
+  if (!classSection) {
+    errors.push('Class Section must match an existing class section id or name.')
+  }
+  if (!isImportEmail(email)) {
+    errors.push('Valid student email is required.')
+  }
+
+  const existing = context.studentByRoll.get(importKey(rollNo))
+  return {
+    rowNumber,
+    data: row,
+    errors,
+    action: existing ? 'update' : 'create',
+    normalized: {
+      id: existing?.id ?? makeImportId('s', rollNo || name),
+      rollNo,
+      name,
+      classSectionId: classSection?.id ?? '',
+      email,
+    },
+  }
+}
+
+function validateImportStaff(row, rowNumber, context) {
+  const employeeCode = readImportField(row, ['employeeCode', 'employee code', 'emp code']).toUpperCase()
+  const name = readImportField(row, ['name', 'staff name', 'faculty name']).replace(/\s+/g, ' ')
+  const department = readImportField(row, ['department', 'dept']).replace(/\s+/g, ' ')
+  const designation = readImportField(row, ['designation', 'title']).replace(/\s+/g, ' ')
+  const email = readImportField(row, ['email', 'faculty email', 'staff email']).toLowerCase()
+  const phone = readImportField(row, ['phone', 'mobile'])
+  const status = normalizeImportStatus(
+    readImportField(row, ['status']),
+    new Set(['active', 'on_leave', 'inactive']),
+    'active',
+  )
+  const joinedAt = readImportField(row, ['joinedAt', 'joined at', 'joined', 'joining date']) || currentDateString()
+  const officeRoom = readImportField(row, ['officeRoom', 'office room', 'room']).replace(/\s+/g, ' ')
+  const teacherInput = readImportField(row, ['teacherId', 'teacher id'])
+  const existing = context.staffByEmployeeCode.get(importKey(employeeCode)) ?? context.staffByEmail.get(importKey(email))
+  const existingTeacher = context.teacherByKey.get(importKey(teacherInput || email || name))
+  const errors = []
+
+  if (employeeCode.length < 3) {
+    errors.push('Employee Code is required.')
+  }
+  if (name.length < 3) {
+    errors.push('Staff name must be at least 3 characters.')
+  }
+  if (department.length < 2) {
+    errors.push('Department is required.')
+  }
+  if (designation.length < 2) {
+    errors.push('Designation is required.')
+  }
+  if (!isImportEmail(email)) {
+    errors.push('Valid staff email is required.')
+  }
+  if (phone.length < 5) {
+    errors.push('Phone is required.')
+  }
+  if (officeRoom.length < 2) {
+    errors.push('Office Room is required.')
+  }
+
+  return {
+    rowNumber,
+    data: row,
+    errors,
+    action: existing ? 'update' : 'create',
+    normalized: {
+      id: existing?.id ?? makeImportId('staff', employeeCode || name),
+      teacherId: (existingTeacher?.id ?? existing?.teacherId ?? teacherInput) || `t-${slugify(email || employeeCode || name)}`,
+      employeeCode,
+      name,
+      department,
+      designation,
+      email,
+      phone,
+      status,
+      joinedAt,
+      officeRoom,
+    },
+  }
+}
+
+function validateImportSubject(row, rowNumber, context) {
+  const departmentValue = readImportField(row, ['department', 'department code', 'department id', 'dept'])
+  const department = context.departmentByKey.get(importKey(departmentValue))
+  const semester = parseImportInteger(readImportField(row, ['semester', 'sem']))
+  const code = readImportField(row, ['code', 'subject code']).toUpperCase().replace(/\s+/g, '')
+  const name = readImportField(row, ['name', 'subject name']).replace(/\s+/g, ' ')
+  const credits = parseImportInteger(readImportField(row, ['credits', 'credit']))
+  const kind = normalizeImportStatus(readImportField(row, ['kind', 'type']), subjectKinds, 'theory')
+  const defaultFaculty = readImportField(row, ['defaultFaculty', 'default faculty', 'faculty']).replace(/\s+/g, ' ')
+  const status = normalizeImportStatus(readImportField(row, ['status']), masterDataStatuses, 'active')
+  const existing = context.masterSubjectByCode.get(importKey(code))
+  const errors = []
+
+  if (!department) {
+    errors.push('Department must match an existing department id, code, or name.')
+  }
+  if (!Number.isInteger(semester) || semester < 1 || semester > 8) {
+    errors.push('Semester must be a whole number from 1 to 8.')
+  }
+  if (!/^[a-z0-9]{2,12}$/i.test(code)) {
+    errors.push('Subject Code must be 2 to 12 letters or numbers.')
+  }
+  if (name.length < 3) {
+    errors.push('Subject name must be at least 3 characters.')
+  }
+  if (!Number.isInteger(credits) || credits < 0 || credits > 6) {
+    errors.push('Credits must be a whole number from 0 to 6.')
+  }
+  if (defaultFaculty.length < 3) {
+    errors.push('Default Faculty is required.')
+  }
+
+  return {
+    rowNumber,
+    data: row,
+    errors,
+    action: existing ? 'update' : 'create',
+    normalized: {
+      id: existing?.id ?? makeImportId('ms', code || name),
+      academicSubjectId: context.academicSubjectByCode.get(importKey(code))?.id ?? `sub-${slugify(code || name)}`,
+      departmentId: department?.id ?? '',
+      departmentName: department?.name ?? '',
+      semester,
+      code,
+      name,
+      credits,
+      kind,
+      defaultFaculty,
+      status,
+    },
+  }
+}
+
+function validateImportTimetable(row, rowNumber, context) {
+  const classValue = readImportField(row, ['classSection', 'class section', 'class', 'section'])
+  const classSection = context.classByKey.get(importKey(classValue))
+  const dayValue = readImportField(row, ['day'])
+  const day = Array.from(academicDays).find((item) => importKey(item) === importKey(dayValue)) ?? dayValue
+  const periodNumber = parseImportInteger(readImportField(row, ['periodNumber', 'period number', 'period']))
+  const startTime = readImportField(row, ['startTime', 'start time'])
+  const endTime = readImportField(row, ['endTime', 'end time'])
+  const subjectValue = readImportField(row, ['subjectCode', 'subject code', 'subject'])
+  const teacherValue = readImportField(row, ['teacher', 'teacherId', 'teacher id', 'teacher email', 'faculty'])
+  const room = readImportField(row, ['room', 'classroom']).replace(/\s+/g, ' ')
+  const slotIdInput = readImportField(row, ['slotId', 'slot id'])
+  const academicSubject = context.academicSubjectByKey.get(importKey(subjectValue))
+  const masterSubject = context.masterSubjectByCode.get(importKey(subjectValue))
+  const masterDepartment = masterSubject
+    ? context.departments.find((department) => department.id === masterSubject.departmentId)
+    : undefined
+  const teacher = context.teacherByKey.get(importKey(teacherValue))
+  const generatedSlotId = classSection && day && Number.isInteger(periodNumber)
+    ? `slot-${classSection.id}-${slugify(day)}-${periodNumber}`
+    : makeImportId('slot', `${classValue}-${dayValue}-${periodNumber}`)
+  const slotId = slotIdInput || generatedSlotId
+  const errors = []
+
+  if (!classSection) {
+    errors.push('Class Section must match an existing class section id or name.')
+  }
+  if (!academicDays.has(day)) {
+    errors.push('Day must be Monday to Saturday.')
+  }
+  if (!Number.isInteger(periodNumber) || periodNumber < 1 || periodNumber > 12) {
+    errors.push('Period Number must be between 1 and 12.')
+  }
+  if (!/^\d{2}:\d{2}$/.test(startTime)) {
+    errors.push('Start Time must use HH:MM format.')
+  }
+  if (!/^\d{2}:\d{2}$/.test(endTime)) {
+    errors.push('End Time must use HH:MM format.')
+  }
+  if (!academicSubject && !masterSubject) {
+    errors.push('Subject Code must match an academic or master subject.')
+  }
+  if (!teacher) {
+    errors.push('Teacher must match an existing teacher id, email, or name.')
+  }
+  if (room.length < 2) {
+    errors.push('Room is required.')
+  }
+
+  return {
+    rowNumber,
+    data: row,
+    errors,
+    action: context.timetableById.has(slotId) ? 'update' : 'create',
+    normalized: {
+      id: slotId,
+      classSectionId: classSection?.id ?? '',
+      day,
+      periodNumber,
+      startTime,
+      endTime,
+      subjectId: academicSubject?.id ?? (masterSubject ? `sub-${slugify(masterSubject.code)}` : ''),
+      subjectCode: academicSubject?.code ?? masterSubject?.code ?? '',
+      subjectName: academicSubject?.name ?? masterSubject?.name ?? '',
+      subjectDepartment: academicSubject?.department ?? masterDepartment?.name ?? '',
+      teacherId: teacher?.id ?? '',
+      room,
+    },
+  }
+}
+
+function validateImportRows(kind, rows) {
+  if (!importKinds.has(kind)) {
+    throw new Error('Unsupported import type.')
+  }
+
+  const context = makeImportContext()
+  const validator = {
+    students: validateImportStudent,
+    staff: validateImportStaff,
+    subjects: validateImportSubject,
+    timetable: validateImportTimetable,
+  }[kind]
+
+  const reviewedRows = (Array.isArray(rows) ? rows : [])
+    .slice(0, 1000)
+    .map((row, index) => validator(row, index + 2, context))
+  const validRows = reviewedRows.filter((row) => row.errors.length === 0)
+  const invalidRows = reviewedRows.filter((row) => row.errors.length > 0)
+
+  return {
+    version: 1,
+    kind,
+    totalRows: reviewedRows.length,
+    validRows,
+    invalidRows,
+    summary: {
+      valid: validRows.length,
+      invalid: invalidRows.length,
+      creates: validRows.filter((row) => row.action === 'create').length,
+      updates: validRows.filter((row) => row.action === 'update').length,
+    },
+  }
+}
+
+function upsertImportedStudent(student) {
+  const result = db
+    .prepare(`
+      UPDATE academic_students
+      SET name = ?, class_section_id = ?, email = ?
+      WHERE roll_no = ?
+    `)
+    .run(student.name, student.classSectionId, student.email, student.rollNo)
+
+  if (result.changes === 0) {
+    insertAcademicStudentStatement.run(student.id, student.rollNo, student.name, student.classSectionId, student.email)
+  }
+}
+
+function upsertImportedStaff(staff) {
+  const staffResult = db
+    .prepare(`
+      UPDATE staff_profiles
+      SET
+        teacher_id = ?,
+        employee_code = ?,
+        name = ?,
+        department = ?,
+        designation = ?,
+        email = ?,
+        phone = ?,
+        status = ?,
+        joined_at = ?,
+        office_room = ?,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `)
+    .run(
+      staff.teacherId,
+      staff.employeeCode,
+      staff.name,
+      staff.department,
+      staff.designation,
+      staff.email,
+      staff.phone,
+      staff.status,
+      staff.joinedAt,
+      staff.officeRoom,
+      staff.id,
+    )
+
+  if (staffResult.changes === 0) {
+    insertStaffProfileStatement.run(
+      staff.id,
+      staff.teacherId,
+      staff.employeeCode,
+      staff.name,
+      staff.department,
+      staff.designation,
+      staff.email,
+      staff.phone,
+      staff.status,
+      staff.joinedAt,
+      staff.officeRoom,
+    )
+  }
+
+  const teacherResult = db
+    .prepare(`
+      UPDATE academic_teachers
+      SET name = ?, department = ?, email = ?
+      WHERE id = ?
+    `)
+    .run(staff.name, staff.department, staff.email, staff.teacherId)
+
+  if (teacherResult.changes === 0) {
+    db.prepare(`
+      INSERT OR IGNORE INTO academic_teachers (id, name, department, email)
+      VALUES (?, ?, ?, ?)
+    `).run(staff.teacherId, staff.name, staff.department, staff.email)
+  }
+}
+
+function upsertImportedSubject(subject) {
+  const masterResult = db
+    .prepare(`
+      UPDATE subjects
+      SET
+        department_id = ?,
+        semester = ?,
+        name = ?,
+        credits = ?,
+        kind = ?,
+        default_faculty = ?,
+        status = ?,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE code = ?
+    `)
+    .run(
+      subject.departmentId,
+      subject.semester,
+      subject.name,
+      subject.credits,
+      subject.kind,
+      subject.defaultFaculty,
+      subject.status,
+      subject.code,
+    )
+
+  if (masterResult.changes === 0) {
+    insertSubjectStatement.run(
+      subject.id,
+      subject.departmentId,
+      subject.semester,
+      subject.code,
+      subject.name,
+      subject.credits,
+      subject.kind,
+      subject.defaultFaculty,
+      subject.status,
+    )
+  }
+
+  const academicResult = db
+    .prepare(`
+      UPDATE academic_subjects
+      SET name = ?, department = ?
+      WHERE code = ?
+    `)
+    .run(subject.name, subject.departmentName, subject.code)
+
+  if (academicResult.changes === 0) {
+    db.prepare(`
+      INSERT OR IGNORE INTO academic_subjects (id, code, name, department)
+      VALUES (?, ?, ?, ?)
+    `).run(subject.academicSubjectId, subject.code, subject.name, subject.departmentName)
+  }
+}
+
+function upsertImportedTimetableSlot(slot) {
+  const subjectExists = db.prepare('SELECT id FROM academic_subjects WHERE id = ?').get(slot.subjectId)
+  if (!subjectExists && slot.subjectCode) {
+    db.prepare(`
+      INSERT OR IGNORE INTO academic_subjects (id, code, name, department)
+      VALUES (?, ?, ?, ?)
+    `).run(slot.subjectId, slot.subjectCode, slot.subjectName || slot.subjectCode, slot.subjectDepartment || 'Imported')
+  }
+
+  const result = db
+    .prepare(`
+      UPDATE academic_timetable_slots
+      SET
+        class_section_id = ?,
+        day = ?,
+        period_number = ?,
+        start_time = ?,
+        end_time = ?,
+        subject_id = ?,
+        teacher_id = ?,
+        room = ?
+      WHERE id = ?
+    `)
+    .run(
+      slot.classSectionId,
+      slot.day,
+      slot.periodNumber,
+      slot.startTime,
+      slot.endTime,
+      slot.subjectId,
+      slot.teacherId,
+      slot.room,
+      slot.id,
+    )
+
+  if (result.changes === 0) {
+    insertTimetableSlotStatement.run(
+      slot.id,
+      slot.classSectionId,
+      slot.day,
+      slot.periodNumber,
+      slot.startTime,
+      slot.endTime,
+      slot.subjectId,
+      slot.teacherId,
+      slot.room,
+    )
+  }
+}
+
+function importKindLabel(kind) {
+  return {
+    students: 'students',
+    staff: 'staff profiles',
+    subjects: 'subjects',
+    timetable: 'timetable slots',
+  }[kind] ?? 'records'
+}
+
+export function previewImportRows(kind, rows) {
+  return validateImportRows(kind, rows)
+}
+
+export function commitImportRows(kind, rows, actor = 'CampusOps Admin') {
+  const preview = validateImportRows(kind, rows)
+  const upsert = {
+    students: upsertImportedStudent,
+    staff: upsertImportedStaff,
+    subjects: upsertImportedSubject,
+    timetable: upsertImportedTimetableSlot,
+  }[kind]
+
+  db.exec('BEGIN')
+  try {
+    preview.validRows.forEach((row) => upsert(row.normalized))
+    db.exec('COMMIT')
+  } catch (error) {
+    db.exec('ROLLBACK')
+    throw error
+  }
+
+  const label = importKindLabel(kind)
+  const auditEvent = createAuditEvent({
+    actor,
+    action: 'Imported data',
+    outcome: `${preview.validRows.length} ${label} imported; ${preview.invalidRows.length} rows rejected.`,
+    severity: preview.invalidRows.length > 0 ? 'warning' : 'success',
+  })
+
+  return {
+    ...preview,
+    importedRows: preview.validRows.length,
+    auditEvent,
   }
 }
 
