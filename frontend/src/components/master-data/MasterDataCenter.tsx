@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   BookOpenCheck,
   BriefcaseBusiness,
@@ -60,6 +60,11 @@ type MasterDataCenterProps = {
   onAuditEvent: (event: AuditEvent) => void
 }
 
+type EditorNotice = {
+  tone: 'info' | 'success' | 'warning' | 'error'
+  message: string
+}
+
 const defaultDepartmentDraft: DepartmentDraft = {
   name: 'Artificial Intelligence and Data Science',
   code: 'AIDS',
@@ -77,6 +82,29 @@ const defaultSubjectDraft: SubjectDraft = {
   kind: 'elective',
   defaultFaculty: 'Prof. Anjali Rao',
   status: 'active',
+}
+
+function makeBlankDepartmentDraft(): DepartmentDraft {
+  return {
+    name: '',
+    code: '',
+    facultyInCharge: '',
+    officeRoom: '',
+    status: 'active',
+  }
+}
+
+function makeBlankSubjectDraft(departmentId: string): SubjectDraft {
+  return {
+    departmentId,
+    semester: 1,
+    code: '',
+    name: '',
+    credits: 3,
+    kind: 'theory',
+    defaultFaculty: '',
+    status: 'active',
+  }
 }
 
 function omitDepartmentId(department: MasterDepartment): DepartmentDraft {
@@ -124,8 +152,45 @@ export function MasterDataCenter({ currentRole, actorId, userName, onAuditEvent 
   const [subjectStatusFilter, setSubjectStatusFilter] = useState<MasterDataStatus | 'all'>('all')
   const [backendStatus, setBackendStatus] = useState<'checking' | 'connected' | 'offline'>('checking')
   const [syncMessage, setSyncMessage] = useState('Checking local backend.')
+  const [departmentNotice, setDepartmentNotice] = useState<EditorNotice>({
+    tone: 'info',
+    message: 'Department editor ready.',
+  })
+  const [subjectNotice, setSubjectNotice] = useState<EditorNotice>({
+    tone: 'info',
+    message: 'Subject editor ready.',
+  })
+  const [savingDepartment, setSavingDepartment] = useState(false)
+  const [savingSubject, setSavingSubject] = useState(false)
+  const departmentEditorRef = useRef<HTMLElement | null>(null)
+  const subjectEditorRef = useRef<HTMLElement | null>(null)
   const isAdmin = currentRole === 'admin'
   const currentTeacher = teachers.find((teacher) => teacher.id === actorId)
+
+  const revealEditor = (editor: 'department' | 'subject') => {
+    window.setTimeout(() => {
+      const element = editor === 'department' ? departmentEditorRef.current : subjectEditorRef.current
+      element?.scrollIntoView({ behavior: 'smooth', block: 'start', inline: 'nearest' })
+      const firstField = element?.querySelector<HTMLInputElement | HTMLSelectElement>('input, select')
+      firstField?.focus({ preventScroll: true })
+    }, 0)
+  }
+
+  const updateDepartmentDraft = (updater: (currentDraft: DepartmentDraft) => DepartmentDraft) => {
+    setDepartmentDraft(updater)
+    setDepartmentNotice({
+      tone: 'info',
+      message: 'Unsaved department changes. Click Save department when ready.',
+    })
+  }
+
+  const updateSubjectDraft = (updater: (currentDraft: SubjectDraft) => SubjectDraft) => {
+    setSubjectDraft(updater)
+    setSubjectNotice({
+      tone: 'info',
+      message: 'Unsaved subject changes. Click Save subject when ready.',
+    })
+  }
 
   const departmentById = useMemo(
     () => new Map(departments.map((department) => [department.id, department])),
@@ -278,25 +343,47 @@ export function MasterDataCenter({ currentRole, actorId, userName, onAuditEvent 
 
   const startNewDepartment = () => {
     setEditingDepartmentId(null)
-    setDepartmentDraft(defaultDepartmentDraft)
+    setDepartmentDraft(makeBlankDepartmentDraft())
+    setDepartmentNotice({
+      tone: 'info',
+      message: 'New department form ready. Fill the fields and click Save department.',
+    })
+    revealEditor('department')
   }
 
   const startNewSubject = () => {
+    const selectedDepartmentId =
+      subjectDepartmentFilter !== 'all' && departments.some((department) => department.id === subjectDepartmentFilter)
+        ? subjectDepartmentFilter
+        : departments[0]?.id ?? defaultSubjectDraft.departmentId
+
     setEditingSubjectId(null)
-    setSubjectDraft({
-      ...defaultSubjectDraft,
-      departmentId: departments[0]?.id ?? defaultSubjectDraft.departmentId,
+    setSubjectDraft(makeBlankSubjectDraft(selectedDepartmentId))
+    setSubjectNotice({
+      tone: 'info',
+      message: 'New subject form ready. Fill the fields and click Save subject.',
     })
+    revealEditor('subject')
   }
 
   const loadDepartment = (department: MasterDepartment) => {
     setEditingDepartmentId(department.id)
     setDepartmentDraft(omitDepartmentId(department))
+    setDepartmentNotice({
+      tone: 'info',
+      message: `${department.code} loaded. Edit the fields and click Save department.`,
+    })
+    revealEditor('department')
   }
 
   const loadSubject = (subject: MasterSubject) => {
     setEditingSubjectId(subject.id)
     setSubjectDraft(omitSubjectId(subject))
+    setSubjectNotice({
+      tone: 'info',
+      message: `${subject.code} loaded. Edit the fields and click Save subject.`,
+    })
+    revealEditor('subject')
   }
 
   const saveDepartment = async () => {
@@ -307,8 +394,15 @@ export function MasterDataCenter({ currentRole, actorId, userName, onAuditEvent 
     const sanitizedDraft = sanitizeDepartmentDraft(departmentDraft)
     const errors = validateDepartmentDraft(sanitizedDraft, departments, editingDepartmentId ?? undefined)
     if (errors.length > 0) {
+      setDepartmentNotice({
+        tone: 'error',
+        message: `Department not saved. Fix ${errors.length} validation issue${errors.length === 1 ? '' : 's'} first.`,
+      })
+      revealEditor('department')
       return
     }
+
+    setSavingDepartment(true)
 
     if (editingDepartmentId) {
       const existingDepartment = departments.find((department) => department.id === editingDepartmentId)
@@ -326,10 +420,23 @@ export function MasterDataCenter({ currentRole, actorId, userName, onAuditEvent 
         try {
           savedDepartment = await updateDepartmentOnServer(editingDepartmentId, sanitizedDraft)
           setSyncMessage('Department saved to SQLite backend.')
+          setDepartmentNotice({
+            tone: 'success',
+            message: `${savedDepartment.code} saved successfully to SQLite.`,
+          })
         } catch {
           setBackendStatus('offline')
           setSyncMessage('Backend save failed; department saved in browser backup.')
+          setDepartmentNotice({
+            tone: 'warning',
+            message: `${savedDepartment.code} saved in browser backup because SQLite was unavailable.`,
+          })
         }
+      } else {
+        setDepartmentNotice({
+          tone: 'success',
+          message: `${savedDepartment.code} saved successfully in browser backup.`,
+        })
       }
 
       setDepartments((currentDepartments) =>
@@ -348,14 +455,17 @@ export function MasterDataCenter({ currentRole, actorId, userName, onAuditEvent 
           'success',
         ),
       )
+      setSavingDepartment(false)
       return
     }
 
     let department: MasterDepartment | null = null
+    let savedToBackend = false
 
     if (backendStatus === 'connected') {
       try {
         department = await createDepartmentOnServer(sanitizedDraft)
+        savedToBackend = true
         setSyncMessage('Department saved to SQLite backend.')
       } catch {
         setBackendStatus('offline')
@@ -371,9 +481,16 @@ export function MasterDataCenter({ currentRole, actorId, userName, onAuditEvent 
     setDepartments((currentDepartments) => [...currentDepartments, department])
     setEditingDepartmentId(department.id)
     setDepartmentDraft(omitDepartmentId(department))
+    setDepartmentNotice({
+      tone: savedToBackend ? 'success' : 'warning',
+      message: savedToBackend
+        ? `${department.code} added successfully to SQLite.`
+        : `${department.code} added in browser backup because SQLite was unavailable.`,
+    })
     onAuditEvent(
       makeMasterAudit(userName, 'Added department', `${department.name} (${department.code}) created.`, 'success'),
     )
+    setSavingDepartment(false)
   }
 
   const saveSubject = async () => {
@@ -384,8 +501,15 @@ export function MasterDataCenter({ currentRole, actorId, userName, onAuditEvent 
     const sanitizedDraft = sanitizeSubjectDraft(subjectDraft)
     const errors = validateSubjectDraft(sanitizedDraft, departments, subjects, editingSubjectId ?? undefined)
     if (errors.length > 0) {
+      setSubjectNotice({
+        tone: 'error',
+        message: `Subject not saved. Fix ${errors.length} validation issue${errors.length === 1 ? '' : 's'} first.`,
+      })
+      revealEditor('subject')
       return
     }
+
+    setSavingSubject(true)
 
     if (editingSubjectId) {
       const existingSubject = subjects.find((subject) => subject.id === editingSubjectId)
@@ -403,10 +527,23 @@ export function MasterDataCenter({ currentRole, actorId, userName, onAuditEvent 
         try {
           savedSubject = await updateSubjectOnServer(editingSubjectId, sanitizedDraft)
           setSyncMessage('Subject saved to SQLite backend.')
+          setSubjectNotice({
+            tone: 'success',
+            message: `${savedSubject.code} saved successfully to SQLite.`,
+          })
         } catch {
           setBackendStatus('offline')
           setSyncMessage('Backend save failed; subject saved in browser backup.')
+          setSubjectNotice({
+            tone: 'warning',
+            message: `${savedSubject.code} saved in browser backup because SQLite was unavailable.`,
+          })
         }
+      } else {
+        setSubjectNotice({
+          tone: 'success',
+          message: `${savedSubject.code} saved successfully in browser backup.`,
+        })
       }
 
       setSubjects((currentSubjects) =>
@@ -425,14 +562,17 @@ export function MasterDataCenter({ currentRole, actorId, userName, onAuditEvent 
           'success',
         ),
       )
+      setSavingSubject(false)
       return
     }
 
     let subject: MasterSubject | null = null
+    let savedToBackend = false
 
     if (backendStatus === 'connected') {
       try {
         subject = await createSubjectOnServer(sanitizedDraft)
+        savedToBackend = true
         setSyncMessage('Subject saved to SQLite backend.')
       } catch {
         setBackendStatus('offline')
@@ -448,9 +588,16 @@ export function MasterDataCenter({ currentRole, actorId, userName, onAuditEvent 
     setSubjects((currentSubjects) => [...currentSubjects, subject])
     setEditingSubjectId(subject.id)
     setSubjectDraft(omitSubjectId(subject))
+    setSubjectNotice({
+      tone: savedToBackend ? 'success' : 'warning',
+      message: savedToBackend
+        ? `${subject.code} added successfully to SQLite.`
+        : `${subject.code} added in browser backup because SQLite was unavailable.`,
+    })
     onAuditEvent(
       makeMasterAudit(userName, 'Added subject', `${subject.code} ${subject.name} created.`, 'success'),
     )
+    setSavingSubject(false)
   }
 
   const resetMasterData = async () => {
@@ -479,6 +626,14 @@ export function MasterDataCenter({ currentRole, actorId, userName, onAuditEvent 
     setEditingSubjectId(null)
     setDepartmentDraft(defaultDepartmentDraft)
     setSubjectDraft(defaultSubjectDraft)
+    setDepartmentNotice({
+      tone: 'success',
+      message: 'Department master reset successfully.',
+    })
+    setSubjectNotice({
+      tone: 'success',
+      message: 'Subject master reset successfully.',
+    })
     setDepartmentQuery('')
     setSubjectQuery('')
     setDepartmentStatusFilter('all')
@@ -614,7 +769,7 @@ export function MasterDataCenter({ currentRole, actorId, userName, onAuditEvent 
               </div>
             </section>
 
-            <section className="panel master-editor-panel">
+            <section ref={departmentEditorRef} className="panel master-editor-panel">
               <div className="panel-heading">
                 <div>
                   <span className="panel-kicker">Admin editor</span>
@@ -622,13 +777,22 @@ export function MasterDataCenter({ currentRole, actorId, userName, onAuditEvent 
                 </div>
                 <BriefcaseBusiness size={20} />
               </div>
+              {departmentNotice ? (
+                <div
+                  className={clsx('master-editor-notice', `is-${departmentNotice.tone}`)}
+                  role={departmentNotice.tone === 'error' ? 'alert' : 'status'}
+                >
+                  <CheckCircle2 size={16} />
+                  <span>{departmentNotice.message}</span>
+                </div>
+              ) : null}
               <div className="master-editor-form">
                 <label>
                   Department name
                   <input
                     value={departmentDraft.name}
                     onChange={(event) =>
-                      setDepartmentDraft((currentDraft) => ({ ...currentDraft, name: event.target.value }))
+                      updateDepartmentDraft((currentDraft) => ({ ...currentDraft, name: event.target.value }))
                     }
                   />
                 </label>
@@ -637,7 +801,7 @@ export function MasterDataCenter({ currentRole, actorId, userName, onAuditEvent 
                   <input
                     value={departmentDraft.code}
                     onChange={(event) =>
-                      setDepartmentDraft((currentDraft) => ({ ...currentDraft, code: event.target.value }))
+                      updateDepartmentDraft((currentDraft) => ({ ...currentDraft, code: event.target.value }))
                     }
                   />
                 </label>
@@ -647,7 +811,7 @@ export function MasterDataCenter({ currentRole, actorId, userName, onAuditEvent 
                     list="master-faculty-options"
                     value={departmentDraft.facultyInCharge}
                     onChange={(event) =>
-                      setDepartmentDraft((currentDraft) => ({
+                      updateDepartmentDraft((currentDraft) => ({
                         ...currentDraft,
                         facultyInCharge: event.target.value,
                       }))
@@ -659,7 +823,7 @@ export function MasterDataCenter({ currentRole, actorId, userName, onAuditEvent 
                   <input
                     value={departmentDraft.officeRoom}
                     onChange={(event) =>
-                      setDepartmentDraft((currentDraft) => ({ ...currentDraft, officeRoom: event.target.value }))
+                      updateDepartmentDraft((currentDraft) => ({ ...currentDraft, officeRoom: event.target.value }))
                     }
                   />
                 </label>
@@ -668,7 +832,7 @@ export function MasterDataCenter({ currentRole, actorId, userName, onAuditEvent 
                   <select
                     value={departmentDraft.status}
                     onChange={(event) =>
-                      setDepartmentDraft((currentDraft) => ({
+                      updateDepartmentDraft((currentDraft) => ({
                         ...currentDraft,
                         status: event.target.value as MasterDataStatus,
                       }))
@@ -689,9 +853,9 @@ export function MasterDataCenter({ currentRole, actorId, userName, onAuditEvent 
                   </div>
                 ) : null}
                 <div className="master-editor-actions">
-                  <button type="button" className="primary-action" disabled={departmentErrors.length > 0} onClick={saveDepartment}>
+                  <button type="button" className="primary-action" disabled={savingDepartment} onClick={saveDepartment}>
                     <CheckCircle2 size={16} />
-                    <span>Save department</span>
+                    <span>{savingDepartment ? 'Saving...' : 'Save department'}</span>
                   </button>
                   <button type="button" className="secondary-action" onClick={startNewDepartment}>
                     <Plus size={15} />
@@ -811,7 +975,7 @@ export function MasterDataCenter({ currentRole, actorId, userName, onAuditEvent 
               </div>
             </section>
 
-            <section className="panel master-editor-panel master-editor-panel--subject">
+            <section ref={subjectEditorRef} className="panel master-editor-panel master-editor-panel--subject">
               <div className="panel-heading">
                 <div>
                   <span className="panel-kicker">Admin editor</span>
@@ -819,13 +983,22 @@ export function MasterDataCenter({ currentRole, actorId, userName, onAuditEvent 
                 </div>
                 <GraduationCap size={20} />
               </div>
+              {subjectNotice ? (
+                <div
+                  className={clsx('master-editor-notice', `is-${subjectNotice.tone}`)}
+                  role={subjectNotice.tone === 'error' ? 'alert' : 'status'}
+                >
+                  <CheckCircle2 size={16} />
+                  <span>{subjectNotice.message}</span>
+                </div>
+              ) : null}
               <div className="master-editor-form">
                 <label>
                   Department
                   <select
                     value={subjectDraft.departmentId}
                     onChange={(event) =>
-                      setSubjectDraft((currentDraft) => ({ ...currentDraft, departmentId: event.target.value }))
+                      updateSubjectDraft((currentDraft) => ({ ...currentDraft, departmentId: event.target.value }))
                     }
                   >
                     {departments.map((department) => (
@@ -840,7 +1013,7 @@ export function MasterDataCenter({ currentRole, actorId, userName, onAuditEvent 
                   <select
                     value={subjectDraft.semester}
                     onChange={(event) =>
-                      setSubjectDraft((currentDraft) => ({ ...currentDraft, semester: Number(event.target.value) }))
+                      updateSubjectDraft((currentDraft) => ({ ...currentDraft, semester: Number(event.target.value) }))
                     }
                   >
                     {[1, 2, 3, 4, 5, 6, 7, 8].map((semester) => (
@@ -855,7 +1028,7 @@ export function MasterDataCenter({ currentRole, actorId, userName, onAuditEvent 
                   <input
                     value={subjectDraft.code}
                     onChange={(event) =>
-                      setSubjectDraft((currentDraft) => ({ ...currentDraft, code: event.target.value }))
+                      updateSubjectDraft((currentDraft) => ({ ...currentDraft, code: event.target.value }))
                     }
                   />
                 </label>
@@ -864,7 +1037,7 @@ export function MasterDataCenter({ currentRole, actorId, userName, onAuditEvent 
                   <input
                     value={subjectDraft.name}
                     onChange={(event) =>
-                      setSubjectDraft((currentDraft) => ({ ...currentDraft, name: event.target.value }))
+                      updateSubjectDraft((currentDraft) => ({ ...currentDraft, name: event.target.value }))
                     }
                   />
                 </label>
@@ -876,7 +1049,7 @@ export function MasterDataCenter({ currentRole, actorId, userName, onAuditEvent 
                     max="6"
                     value={subjectDraft.credits}
                     onChange={(event) =>
-                      setSubjectDraft((currentDraft) => ({ ...currentDraft, credits: Number(event.target.value) }))
+                      updateSubjectDraft((currentDraft) => ({ ...currentDraft, credits: Number(event.target.value) }))
                     }
                   />
                 </label>
@@ -885,7 +1058,7 @@ export function MasterDataCenter({ currentRole, actorId, userName, onAuditEvent 
                   <select
                     value={subjectDraft.kind}
                     onChange={(event) =>
-                      setSubjectDraft((currentDraft) => ({
+                      updateSubjectDraft((currentDraft) => ({
                         ...currentDraft,
                         kind: event.target.value as SubjectKind,
                       }))
@@ -904,7 +1077,7 @@ export function MasterDataCenter({ currentRole, actorId, userName, onAuditEvent 
                     list="master-faculty-options"
                     value={subjectDraft.defaultFaculty}
                     onChange={(event) =>
-                      setSubjectDraft((currentDraft) => ({ ...currentDraft, defaultFaculty: event.target.value }))
+                      updateSubjectDraft((currentDraft) => ({ ...currentDraft, defaultFaculty: event.target.value }))
                     }
                   />
                 </label>
@@ -913,7 +1086,7 @@ export function MasterDataCenter({ currentRole, actorId, userName, onAuditEvent 
                   <select
                     value={subjectDraft.status}
                     onChange={(event) =>
-                      setSubjectDraft((currentDraft) => ({
+                      updateSubjectDraft((currentDraft) => ({
                         ...currentDraft,
                         status: event.target.value as MasterDataStatus,
                       }))
@@ -934,9 +1107,9 @@ export function MasterDataCenter({ currentRole, actorId, userName, onAuditEvent 
                   </div>
                 ) : null}
                 <div className="master-editor-actions">
-                  <button type="button" className="primary-action" disabled={subjectErrors.length > 0} onClick={saveSubject}>
+                  <button type="button" className="primary-action" disabled={savingSubject} onClick={saveSubject}>
                     <CheckCircle2 size={16} />
-                    <span>Save subject</span>
+                    <span>{savingSubject ? 'Saving...' : 'Save subject'}</span>
                   </button>
                   <button type="button" className="secondary-action" onClick={startNewSubject}>
                     <Plus size={15} />

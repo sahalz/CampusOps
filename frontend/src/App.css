@@ -2560,6 +2560,44 @@ h1 {
   font-weight: 800;
 }
 
+.master-editor-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 10px 11px;
+  color: #1d4ed8;
+  background: var(--blue-soft);
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  font-size: 0.84rem;
+  font-weight: 850;
+  line-height: 1.35;
+}
+
+.master-editor-notice svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.master-editor-notice.is-success {
+  color: #047857;
+  background: var(--green-soft);
+  border-color: #bbf7d0;
+}
+
+.master-editor-notice.is-warning {
+  color: #b45309;
+  background: var(--amber-soft);
+  border-color: #fde68a;
+}
+
+.master-editor-notice.is-error {
+  color: #b91c1c;
+  background: #fee2e2;
+  border-color: #fecaca;
+}
+
 .master-validation-list {
   grid-column: 1 / -1;
   display: grid;
