@@ -1,15 +1,12 @@
 import { Suspense, lazy, useEffect, useMemo, useState } from 'react'
 import {
   Activity,
-  BadgeCheck,
   BellRing,
   BookOpenCheck,
   Bot,
   Check,
   ChevronRight,
-  CircleDollarSign,
   ClipboardCheck,
-  Clock3,
   Database,
   FileSpreadsheet,
   Gauge,
@@ -23,7 +20,6 @@ import {
   RefreshCw,
   School,
   SearchCheck,
-  Send,
   ShieldCheck,
   Sparkles,
   UploadCloud,
@@ -79,12 +75,6 @@ const roleLabels: Record<Role, string> = {
   admin: 'Admin',
 }
 
-const roleNotes: Record<Role, string> = {
-  student: 'Checks timetable, attendance percentage, leave status, and period-wise approval updates.',
-  faculty: 'Marks attendance, reviews leave for assigned hours, and sees teaching load by timetable slot.',
-  admin: 'Maps classes, students, teachers, rooms, subjects, timetable periods, and automation controls.',
-}
-
 const authStorageKey = 'campusops-session-v1'
 
 const demoAccounts: UserAccount[] = [
@@ -117,50 +107,74 @@ const demoAccounts: UserAccount[] = [
   },
 ]
 
-const freeStack = [
-  { label: 'Frontend', value: 'Vite + React + Tailwind' },
-  { label: 'Workflow', value: 'React Flow + local state machine' },
-  { label: 'AI', value: 'Local router, Ollama ready' },
-  { label: 'Data', value: 'Supabase or PostgreSQL free tier' },
-  { label: 'Deploy', value: 'Netlify, Render, or Railway free tier' },
-]
-
-const kpiCards = [
-  {
-    label: 'Academic workflows',
-    value: '6',
-    detail: 'Leave, attendance, mapping',
-    icon: ClipboardCheck,
-    tone: 'green',
-  },
-  {
-    label: 'Timetable routing',
-    value: 'Live',
-    detail: 'Class, teacher, room checks',
-    icon: Clock3,
-    tone: 'blue',
-  },
-  {
-    label: 'Guardrail pass',
-    value: '99%',
-    detail: 'Unsafe actions blocked',
-    icon: ShieldCheck,
-    tone: 'amber',
-  },
-  {
-    label: 'Monthly AI cost',
-    value: 'INR 0',
-    detail: 'Local-first demo mode',
-    icon: CircleDollarSign,
-    tone: 'slate',
-  },
-]
-
 const samplePrompts = [
   'Rahul needs medical leave for Monday period 1 Data Structures and wants attendance marked excused after approval.',
   'Admin wants to map CSE-A Monday period 4 to Artificial Intelligence with Prof. Anjali Rao in B-204.',
   'A student reports hostel water issues and wants urgent escalation to the warden.',
 ]
+
+const sectionDescriptions: Record<string, { eyebrow: string; title: string; copy: string }> = {
+  academics: {
+    eyebrow: 'Daily operations',
+    title: 'Academics',
+    copy: 'Manage timetable mapping, attendance, leave, and the day-to-day academic register from one focused workspace.',
+  },
+  'master-data': {
+    eyebrow: 'Setup',
+    title: 'Master Data',
+    copy: 'Keep departments and subject records clean before they are used in imports, timetable mapping, and reports.',
+  },
+  imports: {
+    eyebrow: 'Bulk entry',
+    title: 'Imports',
+    copy: 'Upload student lists, staff profiles, subjects, and timetable sheets with preview validation before saving.',
+  },
+  reports: {
+    eyebrow: 'Office reports',
+    title: 'Reports',
+    copy: 'Review attendance shortage, leave, workload, circular engagement, and daily operations exports.',
+  },
+  circulars: {
+    eyebrow: 'Communication',
+    title: 'Circulars',
+    copy: 'Publish notices, target the right audience, and track read receipts without leaving the admin console.',
+  },
+  staff: {
+    eyebrow: 'People',
+    title: 'Staff Register',
+    copy: 'Maintain faculty profiles, workload links, contact details, and staff status in a readable register.',
+  },
+  approvals: {
+    eyebrow: 'Action queue',
+    title: 'Approvals',
+    copy: 'Handle pending human approvals in a dedicated queue instead of hunting through the full page.',
+  },
+  knowledge: {
+    eyebrow: 'Reference',
+    title: 'Knowledge Base',
+    copy: 'Review the policy and process documents used by the routing assistant.',
+  },
+  security: {
+    eyebrow: 'Controls',
+    title: 'Security',
+    copy: 'Check guardrails and administrative controls for safe workflow automation.',
+  },
+  evaluation: {
+    eyebrow: 'Quality',
+    title: 'Evaluation',
+    copy: 'Track quality metrics and integration readiness separately from daily admin work.',
+  },
+  audit: {
+    eyebrow: 'Traceability',
+    title: 'Audit Trail',
+    copy: 'See recent actions recorded by imports, reports, resets, routing, and approval workflows.',
+  },
+  automation: {
+    eyebrow: 'AI assistant',
+    title: 'Request Router',
+    copy: 'Use the agent workflow tools only when you need routing, workflow simulation, or automation review.',
+  },
+}
 
 function riskLabel(risk: RiskLevel) {
   return risk.charAt(0).toUpperCase() + risk.slice(1)
@@ -226,81 +240,83 @@ function App() {
           label: 'Academics',
           icon: LayoutDashboard,
           roles: ['admin', 'faculty', 'student'] as Role[],
-          targetId: 'section-academics',
-        },
-        {
-          id: 'timetable',
-          label: 'Timetable',
-          icon: GitBranch,
-          roles: ['admin', 'faculty', 'student'] as Role[],
-          targetId: 'section-academics',
         },
         {
           id: 'master-data',
           label: 'Master Data',
           icon: School,
           roles: ['admin', 'faculty'] as Role[],
-          targetId: 'section-master-data',
         },
         {
           id: 'imports',
           label: 'Imports',
           icon: UploadCloud,
           roles: ['admin'] as Role[],
-          targetId: 'section-imports',
         },
         {
           id: 'reports',
           label: activeRole === 'admin' ? 'Reports' : 'My Reports',
           icon: FileSpreadsheet,
           roles: ['admin', 'faculty'] as Role[],
-          targetId: 'section-reports',
         },
         {
           id: 'circulars',
           label: 'Circulars',
           icon: BellRing,
           roles: ['admin', 'faculty', 'student'] as Role[],
-          targetId: 'section-circulars',
         },
         {
           id: 'staff',
           label: 'Staff',
           icon: IdCard,
           roles: ['admin', 'faculty'] as Role[],
-          targetId: 'section-staff',
         },
         {
           id: 'approvals',
           label: 'Approvals',
           icon: ClipboardCheck,
           roles: ['admin', 'faculty'] as Role[],
-          targetId: 'section-approvals',
         },
         {
           id: 'knowledge',
           label: 'Knowledge',
           icon: Database,
           roles: ['admin', 'faculty', 'student'] as Role[],
-          targetId: 'section-knowledge',
+        },
+        {
+          id: 'audit',
+          label: 'Audit Trail',
+          icon: MessageSquareText,
+          roles: ['admin', 'faculty'] as Role[],
+        },
+        {
+          id: 'automation',
+          label: 'AI Router',
+          icon: Bot,
+          roles: ['admin'] as Role[],
         },
         {
           id: 'security',
           label: 'Security',
           icon: LockKeyhole,
           roles: ['admin'] as Role[],
-          targetId: 'section-security',
         },
         {
           id: 'evaluation',
           label: 'Evaluation',
           icon: Gauge,
           roles: ['admin'] as Role[],
-          targetId: 'section-evaluation',
         },
       ].filter((item) => item.roles.includes(activeRole)),
     [activeRole],
   )
+  const sectionMeta = sectionDescriptions[activeNavId] ?? sectionDescriptions.academics
+
+  useEffect(() => {
+    if (!navItems.some((item) => item.id === activeNavId)) {
+      setActiveNavId(navItems[0]?.id ?? 'academics')
+    }
+  }, [activeNavId, navItems])
 
   useEffect(() => {
     let mounted = true
@@ -520,7 +536,7 @@ function App() {
           </div>
           <div>
             <strong>CampusOps AI</strong>
-            <span>Agentic operations OS</span>
+            <span>College admin console</span>
           </div>
         </div>
 
@@ -532,10 +548,7 @@ function App() {
                 key={item.id}
                 type="button"
                 className={clsx('nav-item', activeNavId === item.id && 'is-active')}
-                onClick={() => {
-                  setActiveNavId(item.id)
-                  document.getElementById(item.targetId)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-                }}
+                onClick={() => setActiveNavId(item.id)}
               >
                 <Icon size={17} />
                 <span>{item.label}</span>
@@ -543,26 +556,14 @@ function App() {
             )
           })}
         </nav>
-
-        <div className="free-stack">
-          <div className="free-stack__header">
-            <span>Free-first stack</span>
-            <BadgeCheck size={16} />
-          </div>
-          {freeStack.map((item) => (
-            <div key={item.label} className="stack-row">
-              <span>{item.label}</span>
-              <strong>{item.value}</strong>
-            </div>
-          ))}
-        </div>
       </aside>
 
       <main className="workspace">
         <header className="topbar">
           <div>
-            <span className="eyebrow">Academic operations automation</span>
-            <h1>Timetable-aware attendance and leave OS</h1>
+            <span className="eyebrow">{sectionMeta.eyebrow}</span>
+            <h1>{sectionMeta.title}</h1>
+            <p className="topbar-copy">{sectionMeta.copy}</p>
           </div>
           <div className="topbar-actions">
             <div className="session-chip">
@@ -578,40 +579,11 @@ function App() {
             <button type="button" className="icon-button" aria-label="Sign out" onClick={logout}>
               <LogOut size={18} />
             </button>
-            <button type="button" className="primary-action" onClick={runRouter}>
-              <Send size={16} />
-              <span>Route request</span>
-            </button>
           </div>
         </header>
 
-        <section className="kpi-grid" aria-label="Platform metrics">
-          {kpiCards.map((card) => {
-            const Icon = card.icon
-            return (
-              <article key={card.label} className={clsx('kpi-card', `tone-${card.tone}`)}>
-                <span className="kpi-icon">
-                  <Icon size={18} />
-                </span>
-                <div>
-                  <span>{card.label}</span>
-                  <strong>{card.value}</strong>
-                  <small>{card.detail}</small>
-                </div>
-              </article>
-            )
-          })}
-        </section>
-
-        <section className="role-switcher session-overview" aria-label="Logged in role">
-          <div>
-            <strong>{session.title} workspace</strong>
-            <span>{session.email}</span>
-          </div>
-          <p>{roleNotes[activeRole]}</p>
-        </section>
-
-        <div id="section-academics" className="section-anchor">
+        {activeNavId === 'academics' ? (
+        <div id="section-academics" className="section-anchor active-section">
           <AcademicOperations
             currentRole={session.role}
             actorId={session.actorId}
@@ -619,9 +591,10 @@ function App() {
             onAuditEvent={appendAuditEvent}
           />
         </div>
+        ) : null}
 
-        {activeRole !== 'student' ? (
-          <div id="section-master-data" className="section-anchor">
+        {activeNavId === 'master-data' && activeRole !== 'student' ? (
+          <div id="section-master-data" className="section-anchor active-section">
             <Suspense
               fallback={
                 <div className="master-data-loading">
@@ -641,8 +614,8 @@ function App() {
           </div>
         ) : null}
 
-        {activeRole === 'admin' ? (
-          <div id="section-imports" className="section-anchor">
+        {activeNavId === 'imports' && activeRole === 'admin' ? (
+          <div id="section-imports" className="section-anchor active-section">
             <Suspense
               fallback={
                 <div className="import-loading">
@@ -661,8 +634,8 @@ function App() {
           </div>
         ) : null}
 
-        {activeRole !== 'student' ? (
-          <div id="section-reports" className="section-anchor">
+        {activeNavId === 'reports' && activeRole !== 'student' ? (
+          <div id="section-reports" className="section-anchor active-section">
             <Suspense
               fallback={
                 <div className="reports-loading">
@@ -682,7 +655,8 @@ function App() {
           </div>
         ) : null}
 
-        <div id="section-circulars" className="section-anchor">
+        {activeNavId === 'circulars' ? (
+        <div id="section-circulars" className="section-anchor active-section">
           <CircularsCenter
             currentRole={session.role}
             actorId={session.actorId}
@@ -690,9 +664,10 @@ function App() {
             onAuditEvent={appendAuditEvent}
           />
         </div>
+        ) : null}
 
-        {activeRole !== 'student' ? (
-          <div id="section-staff" className="section-anchor">
+        {activeNavId === 'staff' && activeRole !== 'student' ? (
+          <div id="section-staff" className="section-anchor active-section">
           <Suspense
             fallback={
               <div className="staff-module-loading">
@@ -712,6 +687,7 @@ function App() {
           </div>
         ) : null}
 
+        {activeNavId === 'automation' ? (
         <div
           className={clsx(
             'dashboard-grid',
@@ -812,15 +788,19 @@ function App() {
             </div>
           </section>
         </div>
+        ) : null}
 
+        {['knowledge', 'approvals', 'security'].includes(activeNavId) ? (
         <div
           className={clsx(
             'insight-grid',
+            'single-section-grid',
             !showAdvancedAutomation && 'insight-grid--compact',
             !showApprovalPanel && 'insight-grid--student',
           )}
         >
-          <section id="section-knowledge" className="panel section-anchor">
+          {activeNavId === 'knowledge' ? (
+          <section id="section-knowledge" className="panel section-anchor active-section">
             <div className="panel-heading">
               <div>
                 <span className="panel-kicker">RAG</span>
@@ -842,9 +822,10 @@ function App() {
               ))}
             </div>
           </section>
+          ) : null}
 
-          {showApprovalPanel ? (
-          <section id="section-approvals" className="panel section-anchor">
+          {activeNavId === 'approvals' && showApprovalPanel ? (
+          <section id="section-approvals" className="panel section-anchor active-section">
             <div className="panel-heading">
               <div>
                 <span className="panel-kicker">{pendingApprovals.length} pending</span>
@@ -888,8 +869,8 @@ function App() {
           </section>
           ) : null}
 
-          {showAdvancedAutomation ? (
-          <section id="section-security" className="panel section-anchor">
+          {activeNavId === 'security' && showAdvancedAutomation ? (
+          <section id="section-security" className="panel section-anchor active-section">
             <div className="panel-heading">
               <div>
                 <span className="panel-kicker">OWASP aligned</span>
@@ -911,10 +892,11 @@ function App() {
           </section>
           ) : null}
         </div>
+        ) : null}
 
-        {showAdvancedAutomation ? (
-        <div className="bottom-grid">
-          <section className="panel">
+        {activeNavId === 'audit' ? (
+        <div className="bottom-grid bottom-grid--single">
+          <section className="panel active-section">
             <div className="panel-heading">
               <div>
                 <span className="panel-kicker">Traceability</span>
@@ -934,8 +916,12 @@ function App() {
               ))}
             </div>
           </section>
+        </div>
+        ) : null}
 
-          <section id="section-evaluation" className="panel section-anchor">
+        {activeNavId === 'evaluation' && showAdvancedAutomation ? (
+        <div className="bottom-grid">
+          <section id="section-evaluation" className="panel section-anchor active-section">
             <div className="panel-heading">
               <div>
                 <span className="panel-kicker">Quality</span>

@@ -1,6 +1,5 @@
 import clsx from 'clsx'
 import {
-  ImportCenter,
   SetupWizard,
   TimetableMapper,
 } from './AcademicAdminPanels'
@@ -29,7 +28,6 @@ export function AdminAcademicWorkspace() {
       <div className={clsx('client-workbench-grid', `client-workbench-grid--${currentRole}`)}>
         <SetupWizard />
         <DailyWorkbench />
-        <ImportCenter />
       </div>
 
       <div className={clsx('academic-grid', `academic-grid--${currentRole}`)}>
