@@ -46,6 +46,51 @@ export type KnowledgeDoc = {
   summary: string
 }
 
+export type KnowledgeDocument = {
+  id: string
+  title: string
+  source: string
+  owner: string
+  tags: string[]
+  status: 'active' | 'archived'
+  chunkCount: number
+  createdAt: string
+  updatedAt: string
+}
+
+export type KnowledgeState = {
+  version: 1
+  source: 'sqlite'
+  documents: KnowledgeDocument[]
+  stats: {
+    documents: number
+    activeDocuments: number
+    chunks: number
+  }
+}
+
+export type KnowledgeCitation = {
+  id: string
+  documentId: string
+  title: string
+  source: string
+  owner: string
+  heading: string
+  pageNumber: number
+  content: string
+  snippet: string
+  tags: string[]
+  score: number
+}
+
+export type KnowledgeSearchPayload = {
+  version: 1
+  query: string
+  answer: string
+  citations: KnowledgeCitation[]
+  confidence: number
+}
+
 export type ApprovalStatus = 'pending' | 'approved' | 'blocked'
 
 export type ApprovalItem = {

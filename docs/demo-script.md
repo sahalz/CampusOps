@@ -34,6 +34,7 @@ Show:
 - Timetable mapping
 - Attendance and leave flow
 - Master Data section
+- Knowledge section
 - Imports section
 - Reports section
 
@@ -48,7 +49,18 @@ In Master Data:
 5. Try a duplicate subject code to show validation.
 6. Show that audit events are recorded.
 
-## 4. Import Center Demo
+## 4. Knowledge RAG Demo
+
+In Knowledge:
+
+1. Show the sync chip: `SQLite RAG knowledge base connected`.
+2. Ask: `What is the minimum attendance requirement?`
+3. Show the grounded answer and citations from the Academic Handbook.
+4. Ask: `Who approves medical leave for a period?`
+5. As Admin, paste or load a plain text policy document and save it.
+6. Search a tag such as `circular` or `placement` to show source-backed retrieval.
+
+## 5. Import Center Demo
 
 In Imports:
 
@@ -59,7 +71,7 @@ In Imports:
 5. Export rejected rows as CSV or XLSX for office correction.
 6. Import valid rows and show that the backend records an audit event.
 
-## 5. Reports Demo
+## 6. Reports Demo
 
 In Reports:
 
@@ -71,7 +83,7 @@ In Reports:
 6. Export one report as CSV, PDF, and XLSX and show that audit events are recorded.
 7. Use Print to show the office-friendly print layout.
 
-## 6. Academic Workflow Demo
+## 7. Academic Workflow Demo
 
 1. Map a timetable period.
 2. Select a timetable slot.
@@ -79,7 +91,7 @@ In Reports:
 4. Submit a period-wise leave request.
 5. Approve or reject the leave.
 
-## 7. Faculty Login
+## 8. Faculty Login
 
 Logout and choose:
 
@@ -92,10 +104,11 @@ Show:
 - Faculty-only academic workspace
 - Assigned periods
 - Leave approval queue
+- Knowledge search with citations for policy questions
 - Read-only Master Data view for department and assigned subjects
 - Limited My Reports view for assigned leave and workload backed by backend RBAC
 
-## 8. Student Login
+## 9. Student Login
 
 Logout and choose:
 
@@ -108,10 +121,11 @@ Show:
 - Student timetable
 - Attendance health
 - Period-wise leave application
+- Knowledge search for student policy questions
 - No admin Imports, Master Data, or Reports code loaded in the sidebar
 
 ## Closing Line
 
 Use this explanation:
 
-> CampusOps AI is a full-stack local prototype. The frontend delivers role-specific college operations workflows, while the backend provides SQLite persistence for users, sessions, academics, imports, master data, staff, circulars, reports, and audit logs. It works without paid services and can be upgraded to a campus-wide deployment with password or SSO authentication and PostgreSQL.
+> CampusOps AI is a full-stack local prototype. The frontend delivers role-specific college operations workflows, while the backend provides SQLite persistence for users, sessions, academics, imports, knowledge documents, master data, staff, circulars, reports, and audit logs. It works without paid services and can be upgraded to a campus-wide deployment with password or SSO authentication and PostgreSQL.

@@ -6,6 +6,7 @@ import {
   createCircular,
   createCircularReadReceipt,
   createCircularReadReceipts,
+  createKnowledgeDocument,
   createReportAuditEvent,
   createStaffProfile,
   createSubject,
@@ -18,6 +19,7 @@ import {
   getCircularState,
   getDatabaseInfo,
   getDepartments,
+  getKnowledgeState,
   getMasterData,
   getReportByName,
   getReports,
@@ -26,9 +28,11 @@ import {
   previewImportRows,
   resetAcademicData,
   resetCircularData,
+  resetKnowledgeData,
   resetMasterData,
   resetStaffData,
   saveAcademicState,
+  searchKnowledgeBase,
   updateDepartment,
   updateStaffProfile,
   updateSubject,
@@ -664,6 +668,69 @@ async function handleImports(request, response, pathname) {
   notFound(response)
 }
 
+async function handleKnowledge(request, response, pathname) {
+  if (pathname === '/api/knowledge') {
+    if (request.method !== 'GET') {
+      methodNotAllowed(response)
+      return
+    }
+
+    if (!requireRoles(request, response, ['admin', 'faculty', 'student'])) {
+      return
+    }
+
+    sendJson(response, 200, getKnowledgeState())
+    return
+  }
+
+  if (pathname === '/api/knowledge/search') {
+    if (request.method !== 'POST') {
+      methodNotAllowed(response)
+      return
+    }
+
+    const session = requireRoles(request, response, ['admin', 'faculty', 'student'])
+    if (!session) {
+      return
+    }
+
+    sendJson(response, 200, searchKnowledgeBase(await readJson(request), session.user.name))
+    return
+  }
+
+  if (pathname === '/api/knowledge/documents') {
+    if (request.method !== 'POST') {
+      methodNotAllowed(response)
+      return
+    }
+
+    const session = requireRoles(request, response, ['admin'])
+    if (!session) {
+      return
+    }
+
+    sendJson(response, 201, createKnowledgeDocument(await readJson(request), session.user.name))
+    return
+  }
+
+  if (pathname === '/api/knowledge/reset') {
+    if (request.method !== 'POST') {
+      methodNotAllowed(response)
+      return
+    }
+
+    const session = requireRoles(request, response, ['admin'])
+    if (!session) {
+      return
+    }
+
+    sendJson(response, 200, resetKnowledgeData(session.user.name))
+    return
+  }
+
+  notFound(response)
+}
+
 const server = createServer(async (request, response) => {
   response.setHeader('Access-Control-Allow-Origin', '*')
 
@@ -731,6 +798,11 @@ const server = createServer(async (request, response) => {
 
     if (pathname.startsWith('/api/import')) {
       await handleImports(request, response, pathname)
+      return
+    }
+
+    if (pathname.startsWith('/api/knowledge')) {
+      await handleKnowledge(request, response, pathname)
       return
     }
 

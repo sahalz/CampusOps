@@ -10,6 +10,8 @@ import type {
   ImportKind,
   ImportPreviewPayload,
   ImportSourceRow,
+  KnowledgeSearchPayload,
+  KnowledgeState,
   LeaveRequest,
   MasterDepartment,
   MasterSubject,
@@ -87,6 +89,14 @@ type ReportActionInput = {
   reportName: string
   outcome?: string
   severity?: AuditEvent['severity']
+}
+
+export type KnowledgeDocumentInput = {
+  title: string
+  source: string
+  owner: string
+  tags: string[]
+  body: string
 }
 
 const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL ?? '/api').replace(/\/$/, '')
@@ -335,6 +345,34 @@ export function commitImportOnServer(kind: ImportKind, rows: ImportSourceRow[]) 
     },
     12000,
   )
+}
+
+export function fetchKnowledgeState() {
+  return requestJson<KnowledgeState>('/knowledge')
+}
+
+export function searchKnowledgeOnServer(query: string) {
+  return requestJson<KnowledgeSearchPayload>(
+    '/knowledge/search',
+    {
+      method: 'POST',
+      body: JSON.stringify({ query }),
+    },
+    8000,
+  )
+}
+
+export function createKnowledgeDocumentOnServer(document: KnowledgeDocumentInput) {
+  return requestJson<{ state: KnowledgeState; auditEvent: AuditEvent }>('/knowledge/documents', {
+    method: 'POST',
+    body: JSON.stringify(document),
+  }, 10000)
+}
+
+export function resetKnowledgeOnServer() {
+  return requestJson<KnowledgeState & { auditEvent: AuditEvent }>('/knowledge/reset', {
+    method: 'POST',
+  })
 }
 
 export async function fetchAuditEvents() {

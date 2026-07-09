@@ -23,6 +23,7 @@ CampusOps/
 - Admin Reports and Export Center for attendance shortage, pending leave, workload, subject coverage, inactive records, circular engagement, and daily operations
 - Rejected import rows can be exported as CSV or XLSX for office correction
 - Report exports in CSV, PDF, and XLSX formats with audit events
+- Policy Knowledge and RAG Center with SQLite-backed documents, chunks, search, and citations
 - Audit trail persistence through the backend
 - Local AI routing simulator with guardrails and workflow visualization
 - Free/local-first deployment model with no paid APIs required
@@ -60,8 +61,9 @@ The project is designed for a reliable college presentation and a realistic adop
 
 - The frontend is professional, responsive, and role-aware.
 - The backend uses local SQLite, so the demo works without internet or paid services.
-- Users, sessions, academic operations, master data, staff profiles, circulars, read receipts, reports, and audit logs are persisted outside the browser.
+- Users, sessions, academic operations, master data, staff profiles, circulars, read receipts, knowledge documents, reports, and audit logs are persisted outside the browser.
 - Admin imports validate and commit accepted rows through SQLite-backed APIs before changing operational data.
+- Policy search is grounded in SQLite-backed chunks with source citations for office use.
 - Browser localStorage remains as a fallback so the demo can continue if the backend is temporarily offline.
 - The structure can later evolve to PostgreSQL/Supabase without rewriting the UI.
 
@@ -78,4 +80,4 @@ Use the Admin account first:
 - `Dr. Priya Menon`
 - Role: Admin
 
-Open Imports after Master Data to show CSV/XLSX templates, preview validation, rejected-row exports, and SQLite commit. Then open Reports to show CSV, PDF, and XLSX export, print-friendly reporting, and the SQLite sync status before switching to Faculty and Student role views.
+Open Knowledge to ask an attendance or leave policy question and show citations. Then open Imports after Master Data to show CSV/XLSX templates, preview validation, rejected-row exports, and SQLite commit. Finish with Reports to show CSV, PDF, and XLSX export, print-friendly reporting, and the SQLite sync status.

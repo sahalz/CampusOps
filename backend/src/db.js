@@ -266,6 +266,99 @@ const seedAuthUsers = [
   ],
 ]
 
+const seedKnowledgeDocuments = [
+  {
+    id: 'kb-attendance-leave',
+    title: 'Attendance, Leave, and Medical Exception Rules',
+    source: 'Academic Handbook',
+    owner: 'Academic Office',
+    tags: ['attendance', 'leave', 'medical', 'faculty', 'shortage'],
+    body: `# Minimum attendance
+Students must maintain at least 75 percent attendance in every mapped subject to remain eligible for regular internal assessment and examination processing.
+
+# Period-wise leave
+Leave is reviewed against the exact class section, date, period, subject, and assigned faculty. Faculty can approve medical or official duty exceptions only for the period they are responsible for.
+
+# Medical exception
+Medical leave requires a reason and supporting certificate. Approved medical leave should be marked as excused rather than present. Pending medical leave may temporarily appear as pending leave in the attendance register.
+
+# Shortage review
+The academic office must review shortage reports weekly. Students below 75 percent should be flagged for advisor follow-up before the examination eligibility list is prepared.`,
+  },
+  {
+    id: 'kb-timetable-mapping',
+    title: 'Timetable Mapping and Attendance Register SOP',
+    source: 'Academic Operations SOP',
+    owner: 'Academic Admin',
+    tags: ['timetable', 'attendance', 'class', 'room', 'teacher', 'mapping'],
+    body: `# Timetable mapping
+Every attendance record must be tied to a mapped timetable slot. A valid slot includes class section, day, period number, start time, end time, subject, assigned teacher, and room.
+
+# Conflict rules
+The same teacher should not be assigned to two class sections in the same day and period. The same room should not be assigned to two active sections in the same period.
+
+# Import checks
+Bulk timetable imports should be previewed before saving. Rejected rows must be corrected and re-uploaded instead of manually editing partial data.
+
+# Attendance register
+Faculty should mark attendance on the same day. Unmarked students may be marked present only after the teacher confirms the class was conducted.`,
+  },
+  {
+    id: 'kb-circular-engagement',
+    title: 'Circular Publishing and Read Receipt Policy',
+    source: 'Admin Communication Policy',
+    owner: 'Admin Office',
+    tags: ['circular', 'notice', 'read receipt', 'department', 'communication'],
+    body: `# Circular audience
+Circulars must target the smallest correct audience: everyone, students, faculty, class section, or department.
+
+# Priority use
+Urgent circulars are reserved for same-day operational changes, safety notices, or deadline-critical instructions. Important circulars are used for academic schedule changes.
+
+# Read receipts
+The admin office should monitor unread counts for urgent and important circulars. Low read rates require reminder action through the department or class advisor.
+
+# Attachments
+Attachments should be named clearly so students and faculty can verify the notice context without contacting the office.`,
+  },
+  {
+    id: 'kb-placement-faq',
+    title: 'Placement Cell FAQ and Drive Notices',
+    source: 'TPO Notice Board',
+    owner: 'Placement Cell',
+    tags: ['placement', 'eligibility', 'company', 'interview', 'resume'],
+    body: `# Eligibility
+Placement eligibility may include attendance, active enrollment, department, semester, arrear status, and company-specific academic criteria.
+
+# Registration
+Students must register before the published deadline. Late registrations require placement officer approval and may be rejected if the company list has already been submitted.
+
+# Interview schedule
+Interview venue, reporting time, resume format, and allowed documents must be confirmed from the latest placement circular.
+
+# Student questions
+Answers about eligibility or deadlines must cite the active drive notice or placement FAQ instead of relying on memory.`,
+  },
+  {
+    id: 'kb-expense-policy',
+    title: 'Purchase and Reimbursement Policy',
+    source: 'Accounts Manual',
+    owner: 'Accounts Office',
+    tags: ['expense', 'invoice', 'budget', 'payment', 'accounts'],
+    body: `# Reimbursement limits
+Expense claims must include invoice, budget head, event or department purpose, and approver information before payment processing.
+
+# Duplicate invoice check
+Accounts staff should check vendor name, invoice number, date, and amount before approving a reimbursement.
+
+# Approval authority
+High-value expenses require HOD or principal approval. Student activity expenses require faculty sponsor confirmation before accounts processing.
+
+# Payment controls
+No payment should be marked payable unless the claim is approved and the audit trail contains the approver decision.`,
+  },
+]
+
 db.exec(`
   PRAGMA foreign_keys = ON;
   PRAGMA journal_mode = WAL;
@@ -426,6 +519,29 @@ db.exec(`
     read_at TEXT NOT NULL,
     PRIMARY KEY (circular_id, actor_id)
   );
+
+  CREATE TABLE IF NOT EXISTS knowledge_documents (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    source TEXT NOT NULL,
+    owner TEXT NOT NULL,
+    tags TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('active', 'archived')),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS knowledge_chunks (
+    id TEXT PRIMARY KEY,
+    document_id TEXT NOT NULL REFERENCES knowledge_documents(id) ON UPDATE CASCADE ON DELETE CASCADE,
+    chunk_index INTEGER NOT NULL,
+    heading TEXT NOT NULL,
+    page_number INTEGER NOT NULL,
+    content TEXT NOT NULL,
+    tags TEXT NOT NULL,
+    token_count INTEGER NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
 `)
 
 const insertDepartmentStatement = db.prepare(`
@@ -537,6 +653,60 @@ const insertAuthUserStatement = db.prepare(`
   VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 `)
 
+const insertKnowledgeDocumentStatement = db.prepare(`
+  INSERT INTO knowledge_documents (id, title, source, owner, tags, status)
+  VALUES (?, ?, ?, ?, ?, ?)
+`)
+
+const insertKnowledgeChunkStatement = db.prepare(`
+  INSERT INTO knowledge_chunks (id, document_id, chunk_index, heading, page_number, content, tags, token_count)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+`)
+
+function normalizeKnowledgeTags(tags) {
+  const source = Array.isArray(tags) ? tags : String(tags ?? '').split(',')
+  return [...new Set(source.map((tag) => safeString(tag).toLowerCase()).filter(Boolean))].slice(0, 12)
+}
+
+function knowledgeTokenCount(value) {
+  return safeString(value).split(/\s+/).filter(Boolean).length
+}
+
+function chunkKnowledgeBody(body) {
+  const rawBody = safeString(body)
+  if (!rawBody) {
+    return []
+  }
+
+  const sections = rawBody
+    .split(/\n(?=# )/g)
+    .map((section) => section.trim())
+    .filter(Boolean)
+
+  const sourceSections = sections.length > 0 ? sections : [rawBody]
+  return sourceSections.flatMap((section, sectionIndex) => {
+    const lines = section.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
+    const headingLine = lines[0]?.startsWith('# ') ? lines.shift() : ''
+    const heading = headingLine ? headingLine.replace(/^#\s+/, '').trim() : `Section ${sectionIndex + 1}`
+    const content = lines.join(' ').replace(/\s+/g, ' ').trim()
+
+    if (!content) {
+      return []
+    }
+
+    const words = content.split(/\s+/)
+    const chunks = []
+    for (let index = 0; index < words.length; index += 120) {
+      chunks.push({
+        heading,
+        content: words.slice(index, index + 150).join(' '),
+        pageNumber: sectionIndex + 1,
+      })
+    }
+    return chunks
+  })
+}
+
 function seedIfNeeded() {
   const departmentCount = db.prepare('SELECT COUNT(*) AS count FROM departments').get().count
   const subjectCount = db.prepare('SELECT COUNT(*) AS count FROM subjects').get().count
@@ -574,6 +744,11 @@ function seedIfNeeded() {
   const authUserCount = db.prepare('SELECT COUNT(*) AS count FROM auth_users').get().count
   if (authUserCount === 0) {
     seedAuthUsers.forEach((user) => insertAuthUserStatement.run(...user))
+  }
+
+  const knowledgeDocumentCount = db.prepare('SELECT COUNT(*) AS count FROM knowledge_documents').get().count
+  if (knowledgeDocumentCount === 0) {
+    seedKnowledgeDocuments.forEach((document) => insertKnowledgeDocument(document))
   }
 }
 
@@ -783,6 +958,266 @@ export function createAuditEvent(event) {
   )
 
   return auditEvent
+}
+
+function rowToKnowledgeDocument(row) {
+  return {
+    id: row.id,
+    title: row.title,
+    source: row.source,
+    owner: row.owner,
+    tags: JSON.parse(row.tags || '[]'),
+    status: row.status,
+    chunkCount: row.chunkCount ?? 0,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  }
+}
+
+function insertKnowledgeDocument(input) {
+  const tags = normalizeKnowledgeTags(input.tags)
+  const id = safeString(input.id) || makeReadableId('kb', input.title)
+  const title = safeString(input.title).replace(/\s+/g, ' ')
+  const source = safeString(input.source) || 'Uploaded document'
+  const owner = safeString(input.owner) || 'Admin Office'
+  const chunks = chunkKnowledgeBody(input.body)
+
+  if (title.length < 3) {
+    throw new Error('Knowledge document title is required.')
+  }
+  if (chunks.length === 0) {
+    throw new Error('Knowledge document body must include searchable text.')
+  }
+
+  insertKnowledgeDocumentStatement.run(id, title, source, owner, JSON.stringify(tags), 'active')
+  chunks.forEach((chunk, index) => {
+    insertKnowledgeChunkStatement.run(
+      `${id}-chunk-${index + 1}`,
+      id,
+      index + 1,
+      chunk.heading,
+      chunk.pageNumber,
+      chunk.content,
+      JSON.stringify(tags),
+      knowledgeTokenCount(chunk.content),
+    )
+  })
+
+  return id
+}
+
+export function getKnowledgeDocuments() {
+  return db
+    .prepare(`
+      SELECT
+        d.id,
+        d.title,
+        d.source,
+        d.owner,
+        d.tags,
+        d.status,
+        d.created_at AS createdAt,
+        d.updated_at AS updatedAt,
+        COUNT(c.id) AS chunkCount
+      FROM knowledge_documents d
+      LEFT JOIN knowledge_chunks c ON c.document_id = d.id
+      GROUP BY d.id
+      ORDER BY d.updated_at DESC, d.title
+    `)
+    .all()
+    .map(rowToKnowledgeDocument)
+}
+
+export function getKnowledgeState() {
+  const documents = getKnowledgeDocuments()
+  return {
+    version: 1,
+    source: 'sqlite',
+    documents,
+    stats: {
+      documents: documents.length,
+      activeDocuments: documents.filter((document) => document.status === 'active').length,
+      chunks: db.prepare('SELECT COUNT(*) AS count FROM knowledge_chunks').get().count,
+    },
+  }
+}
+
+export function createKnowledgeDocument(input, actor = 'CampusOps Admin') {
+  let documentId = ''
+  db.exec('BEGIN')
+  try {
+    documentId = insertKnowledgeDocument(input)
+    db.exec('COMMIT')
+  } catch (error) {
+    db.exec('ROLLBACK')
+    throw error
+  }
+
+  const document = getKnowledgeDocuments().find((item) => item.id === documentId)
+  const auditEvent = createAuditEvent({
+    actor,
+    action: 'Added knowledge document',
+    outcome: `${document?.title ?? 'Knowledge document'} added to RAG search.`,
+    severity: 'success',
+  })
+
+  return {
+    document,
+    auditEvent,
+    state: getKnowledgeState(),
+  }
+}
+
+export function resetKnowledgeData(actor = 'CampusOps Admin') {
+  db.exec('BEGIN')
+  try {
+    db.exec('DELETE FROM knowledge_chunks')
+    db.exec('DELETE FROM knowledge_documents')
+    seedKnowledgeDocuments.forEach((document) => insertKnowledgeDocument(document))
+    db.exec('COMMIT')
+  } catch (error) {
+    db.exec('ROLLBACK')
+    throw error
+  }
+
+  const auditEvent = createAuditEvent({
+    actor,
+    action: 'Reset knowledge base',
+    outcome: 'Policy knowledge documents were reset to demo defaults.',
+    severity: 'warning',
+  })
+
+  return {
+    ...getKnowledgeState(),
+    auditEvent,
+  }
+}
+
+function tokenizeKnowledgeQuery(value) {
+  return safeString(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9 ]/g, ' ')
+    .split(/\s+/)
+    .filter((token) => token.length > 2)
+    .slice(0, 12)
+}
+
+function scoreKnowledgeChunk(row, tokens) {
+  const haystack = `${row.title} ${row.heading} ${row.content} ${row.tags}`.toLowerCase()
+  const title = String(row.title ?? '').toLowerCase()
+  const heading = String(row.heading ?? '').toLowerCase()
+  return tokens.reduce((score, token) => {
+    if (!haystack.includes(token)) {
+      return score
+    }
+
+    const titleBoost = title.includes(token) ? 5 : 0
+    const headingBoost = heading.includes(token) ? 3 : 0
+    const frequency = haystack.split(token).length - 1
+    return score + titleBoost + headingBoost + Math.min(frequency, 6)
+  }, 0)
+}
+
+function makeKnowledgeSnippet(content, tokens) {
+  const text = safeString(content).replace(/\s+/g, ' ')
+  const lower = text.toLowerCase()
+  const firstHit = tokens
+    .map((token) => lower.indexOf(token))
+    .filter((index) => index >= 0)
+    .sort((first, second) => first - second)[0]
+  const start = firstHit >= 0 ? Math.max(firstHit - 70, 0) : 0
+  const snippet = text.slice(start, start + 240)
+  return `${start > 0 ? '...' : ''}${snippet}${start + 240 < text.length ? '...' : ''}`
+}
+
+export function searchKnowledgeBase(input = {}, actor = 'CampusOps') {
+  const query = safeString(input.query)
+  const tokens = tokenizeKnowledgeQuery(query)
+
+  if (tokens.length === 0) {
+    return {
+      version: 1,
+      query,
+      answer: 'Ask a question with at least one searchable policy term.',
+      citations: [],
+      confidence: 0,
+    }
+  }
+
+  const rows = db
+    .prepare(`
+      SELECT
+        c.id,
+        c.document_id AS documentId,
+        c.chunk_index AS chunkIndex,
+        c.heading,
+        c.page_number AS pageNumber,
+        c.content,
+        c.tags,
+        d.title,
+        d.source,
+        d.owner
+      FROM knowledge_chunks c
+      JOIN knowledge_documents d ON d.id = c.document_id
+      WHERE d.status = 'active'
+      ORDER BY d.updated_at DESC, c.chunk_index
+    `)
+    .all()
+
+  const citations = rows
+    .map((row) => ({
+      id: row.id,
+      documentId: row.documentId,
+      title: row.title,
+      source: row.source,
+      owner: row.owner,
+      heading: row.heading,
+      pageNumber: row.pageNumber,
+      content: row.content,
+      snippet: makeKnowledgeSnippet(row.content, tokens),
+      tags: JSON.parse(row.tags || '[]'),
+      score: scoreKnowledgeChunk(row, tokens),
+    }))
+    .filter((row) => row.score > 0)
+    .sort((first, second) => second.score - first.score)
+    .slice(0, 5)
+
+  if (citations.length === 0) {
+    createAuditEvent({
+      actor,
+      action: 'Searched knowledge base',
+      outcome: `No policy citations found for "${query}".`,
+      severity: 'warning',
+    })
+    return {
+      version: 1,
+      query,
+      answer: 'No matching policy citation was found. Try a more specific term or add the relevant office document.',
+      citations: [],
+      confidence: 0,
+    }
+  }
+
+  const confidence = Math.min(98, Math.round(54 + citations[0].score * 5 + citations.length * 4))
+  const answer = citations
+    .slice(0, 3)
+    .map((citation) => `${citation.heading}: ${citation.snippet}`)
+    .join('\n\n')
+
+  createAuditEvent({
+    actor,
+    action: 'Searched knowledge base',
+    outcome: `${citations.length} policy citations found for "${query}".`,
+    severity: 'info',
+  })
+
+  return {
+    version: 1,
+    query,
+    answer,
+    citations,
+    confidence,
+  }
 }
 
 function rowToAuthUser(row) {
@@ -2568,6 +3003,8 @@ export function getDatabaseInfo() {
     staffProfiles: db.prepare('SELECT COUNT(*) AS count FROM staff_profiles').get().count,
     circulars: db.prepare('SELECT COUNT(*) AS count FROM circulars').get().count,
     circularReadReceipts: db.prepare('SELECT COUNT(*) AS count FROM circular_read_receipts').get().count,
+    knowledgeDocuments: db.prepare('SELECT COUNT(*) AS count FROM knowledge_documents').get().count,
+    knowledgeChunks: db.prepare('SELECT COUNT(*) AS count FROM knowledge_chunks').get().count,
     users: db.prepare('SELECT COUNT(*) AS count FROM auth_users').get().count,
     activeSessions: db.prepare('SELECT COUNT(*) AS count FROM auth_sessions').get().count,
     auditEvents: db.prepare('SELECT COUNT(*) AS count FROM audit_events').get().count,

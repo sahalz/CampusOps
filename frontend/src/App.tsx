@@ -65,6 +65,9 @@ const MasterDataCenter = lazy(() =>
 const ImportCenter = lazy(() =>
   import('./components/imports/ImportCenter').then((module) => ({ default: module.ImportCenter })),
 )
+const KnowledgeCenter = lazy(() =>
+  import('./components/knowledge/KnowledgeCenter').then((module) => ({ default: module.KnowledgeCenter })),
+)
 const ReportsCenter = lazy(() =>
   import('./components/reports/ReportsCenter').then((module) => ({ default: module.ReportsCenter })),
 )
@@ -800,27 +803,22 @@ function App() {
           )}
         >
           {activeNavId === 'knowledge' ? (
-          <section id="section-knowledge" className="panel section-anchor active-section">
-            <div className="panel-heading">
-              <div>
-                <span className="panel-kicker">RAG</span>
-                <h2>Knowledge base</h2>
-              </div>
-              <BookOpenCheck size={20} />
-            </div>
-            <div className="knowledge-list">
-              {(routeResult?.retrievedDocs ?? knowledgeDocs.slice(0, 4)).map((doc) => (
-                <article key={doc.id} className="knowledge-row">
-                  <div>
-                    <strong>{doc.title}</strong>
-                    <span>{doc.source} / {doc.freshness}</span>
-                  </div>
-                  <div className="meter" aria-label={`${doc.coverage} percent coverage`}>
-                    <span style={{ width: `${doc.coverage}%` }} />
-                  </div>
-                </article>
-              ))}
-            </div>
+          <section id="section-knowledge" className="section-anchor active-section">
+            <Suspense
+              fallback={
+                <div className="master-data-loading">
+                  <BookOpenCheck size={18} />
+                  <strong>Loading knowledge base</strong>
+                  <span>Preparing policy documents and citations.</span>
+                </div>
+              }
+            >
+              <KnowledgeCenter
+                currentRole={session.role}
+                userName={session.name}
+                onAuditEvent={appendAuditEvent}
+              />
+            </Suspense>
           </section>
           ) : null}
 
