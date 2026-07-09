@@ -40,6 +40,7 @@ flowchart LR
 - Subjects master data
 - Staff profiles
 - Circulars and circular read receipts
+- Circular intelligence searches visible notices, unread status, urgent items, and deadlines
 - Knowledge documents and searchable policy chunks
 - Validated admin imports for students, staff profiles, subjects, and timetable slots
 - Administrative reports generated from SQLite-backed operational data
@@ -54,6 +55,7 @@ flowchart LR
 - Faculty report payloads are limited to assigned leave, personal workload, and daily summary data.
 - Students do not load the Imports or Reports modules and cannot access those endpoints with a student session.
 - All roles can search policy knowledge with a valid session; only admins can add or reset knowledge documents.
+- All roles can ask circular questions, but answers are limited to notices visible to their session role and actor.
 
 ## Local-First Fallbacks
 

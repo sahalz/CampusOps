@@ -60,7 +60,17 @@ In Knowledge:
 5. As Admin, paste or load a plain text policy document and save it.
 6. Search a tag such as `circular` or `placement` to show source-backed retrieval.
 
-## 5. Import Center Demo
+## 5. Circular Intelligence Demo
+
+In Circulars:
+
+1. Ask `urgent notices` to show circular Q&A with citations.
+2. Ask `deadlines this week` to show expiry/deadline chips.
+3. Ask `placement orientation` as the student account to show role-visible notice answers.
+4. Mark a notice read and show unread counts update.
+5. Publish a new circular as Admin and search for a term from the message.
+
+## 6. Import Center Demo
 
 In Imports:
 
@@ -71,7 +81,7 @@ In Imports:
 5. Export rejected rows as CSV or XLSX for office correction.
 6. Import valid rows and show that the backend records an audit event.
 
-## 6. Reports Demo
+## 7. Reports Demo
 
 In Reports:
 
@@ -83,7 +93,7 @@ In Reports:
 6. Export one report as CSV, PDF, and XLSX and show that audit events are recorded.
 7. Use Print to show the office-friendly print layout.
 
-## 7. Academic Workflow Demo
+## 8. Academic Workflow Demo
 
 1. Map a timetable period.
 2. Select a timetable slot.
@@ -91,7 +101,7 @@ In Reports:
 4. Submit a period-wise leave request.
 5. Approve or reject the leave.
 
-## 8. Faculty Login
+## 9. Faculty Login
 
 Logout and choose:
 
@@ -104,11 +114,12 @@ Show:
 - Faculty-only academic workspace
 - Assigned periods
 - Leave approval queue
+- Circular intelligence limited to faculty-visible notices
 - Knowledge search with citations for policy questions
 - Read-only Master Data view for department and assigned subjects
 - Limited My Reports view for assigned leave and workload backed by backend RBAC
 
-## 9. Student Login
+## 10. Student Login
 
 Logout and choose:
 
@@ -121,6 +132,7 @@ Show:
 - Student timetable
 - Attendance health
 - Period-wise leave application
+- Circular intelligence limited to student-visible notices
 - Knowledge search for student policy questions
 - No admin Imports, Master Data, or Reports code loaded in the sidebar
 

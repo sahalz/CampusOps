@@ -316,6 +316,47 @@ export type CircularState = {
   readReceipts: CircularReadReceipt[]
 }
 
+export type CircularIntelligenceCitation = {
+  id: string
+  title: string
+  priority: CircularPriority
+  audience: string
+  publishedAt: string
+  expiresAt: string
+  deadline: string
+  active: boolean
+  read: boolean
+  snippet: string
+  attachmentName: string
+  score: number
+}
+
+export type CircularDeadlineInsight = {
+  id: string
+  title: string
+  priority: CircularPriority
+  audience: string
+  expiresAt: string
+  deadline: string
+}
+
+export type CircularIntelligencePayload = {
+  version: 1
+  source: 'sqlite'
+  query: string
+  generatedAt: string
+  answer: string
+  stats: {
+    visible: number
+    active: number
+    unread: number
+    urgent: number
+    deadlines: number
+  }
+  citations: CircularIntelligenceCitation[]
+  deadlines: CircularDeadlineInsight[]
+}
+
 export type StaffStatus = 'active' | 'on_leave' | 'inactive'
 
 export type StaffProfile = {

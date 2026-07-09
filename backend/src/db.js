@@ -2871,6 +2871,248 @@ function getCircularEngagementReport(context, filters) {
     .sort((first, second) => second.unreadCount - first.unreadCount || second.publishedAt.localeCompare(first.publishedAt))
 }
 
+function tokenizeNoticeQuery(value) {
+  return safeString(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9 ]/g, ' ')
+    .split(/\s+/)
+    .filter((token) => token.length > 2)
+    .slice(0, 12)
+}
+
+function formatCircularAudienceLabel(circular) {
+  if (circular.audience.type === 'department') {
+    return circular.audience.department
+  }
+
+  if (circular.audience.type === 'class') {
+    return circular.audience.classSectionId
+  }
+
+  if (circular.audience.type === 'students') {
+    return 'All students'
+  }
+
+  if (circular.audience.type === 'faculty') {
+    return 'All faculty'
+  }
+
+  return 'Everyone'
+}
+
+function rankCircularPriority(priority) {
+  return {
+    urgent: 0,
+    important: 1,
+    normal: 2,
+  }[priority] ?? 3
+}
+
+function daysUntilDate(dateValue) {
+  if (!dateValue) {
+    return null
+  }
+
+  const todayMs = Date.parse(currentDateString())
+  const dateMs = Date.parse(dateValue)
+  if (!Number.isFinite(todayMs) || !Number.isFinite(dateMs)) {
+    return null
+  }
+
+  return Math.ceil((dateMs - todayMs) / 86_400_000)
+}
+
+function circularDeadlineLabel(circular) {
+  const daysUntil = daysUntilDate(circular.expiresAt)
+  if (daysUntil === null) {
+    return 'No expiry'
+  }
+  if (daysUntil < 0) {
+    return `Expired ${Math.abs(daysUntil)} days ago`
+  }
+  if (daysUntil === 0) {
+    return 'Expires today'
+  }
+  if (daysUntil === 1) {
+    return 'Expires tomorrow'
+  }
+  return `Expires in ${daysUntil} days`
+}
+
+function scoreCircularForQuery(circular, tokens) {
+  if (tokens.length === 0) {
+    return circular.priority === 'urgent' ? 12 : circular.priority === 'important' ? 8 : 4
+  }
+
+  const haystack = `${circular.title} ${circular.body} ${circular.priority} ${formatCircularAudienceLabel(circular)} ${circular.attachmentName ?? ''}`.toLowerCase()
+  const title = circular.title.toLowerCase()
+  return tokens.reduce((score, token) => {
+    if (!haystack.includes(token)) {
+      return score
+    }
+
+    const titleBoost = title.includes(token) ? 6 : 0
+    const priorityBoost = circular.priority.includes(token) ? 4 : 0
+    const frequency = haystack.split(token).length - 1
+    return score + titleBoost + priorityBoost + Math.min(frequency, 6)
+  }, 0)
+}
+
+function makeCircularSnippet(circular, tokens) {
+  const text = `${circular.title}. ${circular.body}`.replace(/\s+/g, ' ')
+  if (tokens.length === 0) {
+    return text.slice(0, 240)
+  }
+
+  const lower = text.toLowerCase()
+  const firstHit = tokens
+    .map((token) => lower.indexOf(token))
+    .filter((index) => index >= 0)
+    .sort((first, second) => first - second)[0]
+  const start = firstHit >= 0 ? Math.max(firstHit - 70, 0) : 0
+  const snippet = text.slice(start, start + 240)
+  return `${start > 0 ? '...' : ''}${snippet}${start + 240 < text.length ? '...' : ''}`
+}
+
+function isCircularVisibleForActor(circular, sessionUser, context) {
+  if (sessionUser.role === 'admin') {
+    return true
+  }
+
+  if (circular.audience.type === 'everyone') {
+    return true
+  }
+
+  if (circular.audience.type === 'students') {
+    return sessionUser.role === 'student'
+  }
+
+  if (circular.audience.type === 'faculty') {
+    return sessionUser.role === 'faculty'
+  }
+
+  if (circular.audience.type === 'class') {
+    return context.students.some(
+      (student) => student.id === sessionUser.actorId && student.classSectionId === circular.audience.classSectionId,
+    )
+  }
+
+  if (circular.audience.type === 'department') {
+    const targetDepartment = normalizeValue(circular.audience.department)
+    if (sessionUser.role === 'faculty') {
+      const teacher = context.teachers.find((item) => item.id === sessionUser.actorId)
+      return normalizeValue(normalizeDepartmentName(teacher?.department ?? '')) === targetDepartment
+    }
+
+    const student = context.students.find((item) => item.id === sessionUser.actorId)
+    const section = context.classSections.find((item) => item.id === student?.classSectionId)
+    return normalizeValue(normalizeDepartmentName(section?.program ?? '')) === targetDepartment
+  }
+
+  return false
+}
+
+export function searchCircularIntelligence(input = {}, sessionUser = { role: 'admin', actorId: '', name: 'CampusOps' }) {
+  const query = safeString(input.query)
+  const tokens = tokenizeNoticeQuery(query)
+  const context = {
+    ...getAcademicState(),
+    circulars: getCirculars(),
+    readReceipts: getCircularReadReceipts(),
+  }
+  const receiptsForActor = new Set(
+    context.readReceipts
+      .filter((receipt) => receipt.actorId === sessionUser.actorId)
+      .map((receipt) => receipt.circularId),
+  )
+
+  const visibleCirculars = context.circulars
+    .filter((circular) => isCircularVisibleForActor(circular, sessionUser, context))
+    .map((circular) => {
+      const score = scoreCircularForQuery(circular, tokens)
+      const active = isCircularActive(circular)
+      const read = receiptsForActor.has(circular.id)
+      const daysUntil = daysUntilDate(circular.expiresAt)
+
+      return {
+        circular,
+        score,
+        active,
+        read,
+        daysUntil,
+      }
+    })
+
+  const matchedCirculars = visibleCirculars
+    .filter((item) => tokens.length === 0 || item.score > 0)
+    .sort((first, second) => {
+      const priorityDelta = rankCircularPriority(first.circular.priority) - rankCircularPriority(second.circular.priority)
+      return second.score - first.score || priorityDelta || second.circular.publishedAt.localeCompare(first.circular.publishedAt)
+    })
+
+  const citations = matchedCirculars.slice(0, 6).map((item) => ({
+    id: item.circular.id,
+    title: item.circular.title,
+    priority: item.circular.priority,
+    audience: formatCircularAudienceLabel(item.circular),
+    publishedAt: item.circular.publishedAt,
+    expiresAt: item.circular.expiresAt ?? '',
+    deadline: circularDeadlineLabel(item.circular),
+    active: item.active,
+    read: item.read,
+    snippet: makeCircularSnippet(item.circular, tokens),
+    attachmentName: item.circular.attachmentName ?? '',
+    score: item.score,
+  }))
+
+  const activeVisible = visibleCirculars.filter((item) => item.active)
+  const unreadVisible = activeVisible.filter((item) => !item.read)
+  const urgentVisible = activeVisible.filter((item) => item.circular.priority === 'urgent')
+  const deadlines = activeVisible
+    .filter((item) => item.daysUntil !== null && item.daysUntil <= 7)
+    .sort((first, second) => (first.daysUntil ?? 99) - (second.daysUntil ?? 99))
+    .slice(0, 5)
+    .map((item) => ({
+      id: item.circular.id,
+      title: item.circular.title,
+      priority: item.circular.priority,
+      audience: formatCircularAudienceLabel(item.circular),
+      expiresAt: item.circular.expiresAt ?? '',
+      deadline: circularDeadlineLabel(item.circular),
+    }))
+
+  const answer = citations.length > 0
+    ? citations
+        .slice(0, 3)
+        .map((citation) => `${citation.title}: ${citation.snippet}`)
+        .join('\n\n')
+    : 'No matching circular was found for this question.'
+
+  createAuditEvent({
+    actor: sessionUser.name ?? 'CampusOps',
+    action: 'Searched circular intelligence',
+    outcome: `${citations.length} circular citations found for "${query || 'notice summary'}".`,
+    severity: citations.length > 0 ? 'info' : 'warning',
+  })
+
+  return {
+    version: 1,
+    source: 'sqlite',
+    query,
+    generatedAt: new Date().toISOString(),
+    answer,
+    stats: {
+      visible: visibleCirculars.length,
+      active: activeVisible.length,
+      unread: unreadVisible.length,
+      urgent: urgentVisible.length,
+      deadlines: deadlines.length,
+    },
+    citations,
+    deadlines,
+  }
+}
+
 function getDailyOperationsSummary(context, filters) {
   const attendanceDates = context.attendance.map((record) => record.date).sort()
   const selectedDate = filters.date || attendanceDates.at(-1) || currentDateString()

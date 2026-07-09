@@ -19,6 +19,7 @@ CampusOps/
 - SQLite-backed academic operations: classes, teachers, students, subjects, timetable, attendance, leave requests, approvals
 - Departments and subjects master data with SQLite-backed persistence
 - Staff register, admin circulars, and circular read receipts with SQLite-backed persistence
+- Campus Notice Intelligence for circular Q&A, deadlines, unread counts, and source citations
 - Admin Import Center for CSV/XLSX students, staff, subjects, and timetable uploads with preview validation
 - Admin Reports and Export Center for attendance shortage, pending leave, workload, subject coverage, inactive records, circular engagement, and daily operations
 - Rejected import rows can be exported as CSV or XLSX for office correction

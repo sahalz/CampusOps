@@ -2,10 +2,12 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   BellRing,
   CheckCircle2,
+  CalendarClock,
   FileText,
   Megaphone,
   Paperclip,
   RefreshCw,
+  Search,
   Send,
 } from 'lucide-react'
 import clsx from 'clsx'
@@ -21,6 +23,7 @@ import {
   createCircularReadReceiptsOnServer,
   fetchCircularState,
   resetCircularStateOnServer,
+  searchCircularIntelligenceOnServer,
 } from '../../lib/api'
 import {
   formatAudience,
@@ -32,6 +35,7 @@ import type {
   AuditEvent,
   Circular,
   CircularAudience,
+  CircularIntelligencePayload,
   CircularPriority,
   CircularReadReceipt,
   Role,
@@ -149,6 +153,9 @@ export function CircularsCenter({ currentRole, actorId, userName, onAuditEvent }
     () => storedState?.readReceipts ?? [],
   )
   const [draft, setDraft] = useState<CircularDraft>(defaultDraft)
+  const [noticeQuery, setNoticeQuery] = useState('urgent deadline lab')
+  const [noticeResult, setNoticeResult] = useState<CircularIntelligencePayload | null>(null)
+  const [noticeLoading, setNoticeLoading] = useState(false)
   const [backendStatus, setBackendStatus] = useState<'checking' | 'connected' | 'offline'>('checking')
   const [syncMessage, setSyncMessage] = useState('Checking local backend.')
   const isAdmin = currentRole === 'admin'
@@ -196,6 +203,16 @@ export function CircularsCenter({ currentRole, actorId, userName, onAuditEvent }
   useEffect(() => {
     let mounted = true
 
+    searchCircularIntelligenceOnServer('')
+      .then((payload) => {
+        if (mounted) {
+          setNoticeResult(payload)
+        }
+      })
+      .catch(() => {
+        // The circular list remains usable from browser backup if notice intelligence is unavailable.
+      })
+
     fetchCircularState()
       .then((state) => {
         if (!mounted) {
@@ -220,6 +237,24 @@ export function CircularsCenter({ currentRole, actorId, userName, onAuditEvent }
       mounted = false
     }
   }, [])
+
+  const runNoticeSearch = async (query: string = noticeQuery) => {
+    const cleanQuery = query.trim()
+    setNoticeQuery(cleanQuery)
+    setNoticeLoading(true)
+
+    try {
+      const payload = await searchCircularIntelligenceOnServer(cleanQuery)
+      setNoticeResult(payload)
+      setBackendStatus('connected')
+      setSyncMessage(`${payload.citations.length} notice citations found.`)
+    } catch {
+      setBackendStatus('offline')
+      setSyncMessage('Notice intelligence unavailable; circular list is still available.')
+    } finally {
+      setNoticeLoading(false)
+    }
+  }
 
   const markRead = async (circularId: string) => {
     const alreadyRead = readReceipts.some((receipt) => receipt.actorId === actorId && receipt.circularId === circularId)
@@ -353,6 +388,96 @@ export function CircularsCenter({ currentRole, actorId, userName, onAuditEvent }
           <span>{isAdmin ? 'active circulars' : 'unread notices'}</span>
         </div>
       </div>
+
+      <section className="panel notice-intelligence-panel">
+        <div className="panel-heading">
+          <div>
+            <span className="panel-kicker">Notice intelligence</span>
+            <h2>Ask circulars and deadlines</h2>
+          </div>
+          <Search size={20} />
+        </div>
+        <div className="notice-ai-toolbar">
+          <label>
+            <Search size={15} />
+            <input
+              value={noticeQuery}
+              onChange={(event) => setNoticeQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  void runNoticeSearch()
+                }
+              }}
+              placeholder="Ask about circulars, deadlines, lab changes"
+              aria-label="Ask circular intelligence"
+            />
+          </label>
+          <button type="button" className="primary-action" disabled={noticeLoading} onClick={() => void runNoticeSearch()}>
+            <Search size={16} />
+            <span>{noticeLoading ? 'Searching' : 'Search notices'}</span>
+          </button>
+        </div>
+        <div className="notice-ai-samples">
+          {['urgent notices', 'deadlines this week', 'lab change', 'unread notices'].map((question) => (
+            <button key={question} type="button" onClick={() => void runNoticeSearch(question)}>
+              {question}
+            </button>
+          ))}
+        </div>
+
+        {noticeResult ? (
+          <>
+            <div className="notice-ai-stats">
+              <article>
+                <BellRing size={17} />
+                <span>Visible</span>
+                <strong>{noticeResult.stats.visible}</strong>
+              </article>
+              <article>
+                <CheckCircle2 size={17} />
+                <span>Unread</span>
+                <strong>{noticeResult.stats.unread}</strong>
+              </article>
+              <article>
+                <Megaphone size={17} />
+                <span>Urgent</span>
+                <strong>{noticeResult.stats.urgent}</strong>
+              </article>
+              <article>
+                <CalendarClock size={17} />
+                <span>Deadlines</span>
+                <strong>{noticeResult.stats.deadlines}</strong>
+              </article>
+            </div>
+            <div className="notice-ai-answer">
+              <strong>{noticeResult.citations.length > 0 ? 'Answer from circulars' : 'No matching circulars'}</strong>
+              <p>{noticeResult.answer}</p>
+            </div>
+            {noticeResult.deadlines.length > 0 ? (
+              <div className="notice-deadline-strip">
+                {noticeResult.deadlines.map((deadline) => (
+                  <span key={deadline.id}>
+                    {deadline.title} / {deadline.deadline}
+                  </span>
+                ))}
+              </div>
+            ) : null}
+            <div className="notice-citation-list">
+              {noticeResult.citations.map((citation) => (
+                <article key={citation.id} className={clsx('notice-citation', `priority-${citation.priority}`)}>
+                  <div>
+                    <strong>{citation.title}</strong>
+                    <span>
+                      {citation.audience} / {citation.deadline} / {citation.read ? 'read' : 'unread'}
+                    </span>
+                  </div>
+                  <p>{citation.snippet}</p>
+                </article>
+              ))}
+            </div>
+          </>
+        ) : null}
+      </section>
 
       <div className={clsx('circulars-grid', isAdmin && 'circulars-grid--admin')}>
         <section className="panel circulars-list-panel">

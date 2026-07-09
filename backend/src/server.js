@@ -32,6 +32,7 @@ import {
   resetMasterData,
   resetStaffData,
   saveAcademicState,
+  searchCircularIntelligence,
   searchKnowledgeBase,
   updateDepartment,
   updateStaffProfile,
@@ -487,6 +488,21 @@ async function handleStaff(request, response, pathname) {
 }
 
 async function handleCirculars(request, response, pathname) {
+  if (pathname === '/api/circular-intelligence/search') {
+    if (request.method !== 'POST') {
+      methodNotAllowed(response)
+      return
+    }
+
+    const session = requireRoles(request, response, ['admin', 'faculty', 'student'])
+    if (!session) {
+      return
+    }
+
+    sendJson(response, 200, searchCircularIntelligence(await readJson(request), session.user))
+    return
+  }
+
   if (pathname === '/api/circular-state') {
     if (request.method !== 'GET') {
       methodNotAllowed(response)
@@ -784,6 +800,7 @@ const server = createServer(async (request, response) => {
 
     if (
       pathname.startsWith('/api/circular-state') ||
+      pathname.startsWith('/api/circular-intelligence') ||
       pathname.startsWith('/api/circulars') ||
       pathname.startsWith('/api/circular-read-receipts')
     ) {

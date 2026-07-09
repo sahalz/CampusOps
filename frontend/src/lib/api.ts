@@ -4,6 +4,7 @@ import type {
   AuditEvent,
   ClassSection,
   Circular,
+  CircularIntelligencePayload,
   CircularReadReceipt,
   CircularState,
   ImportCommitPayload,
@@ -301,6 +302,17 @@ export function resetCircularStateOnServer() {
   return requestJson<CircularState>('/circular-state/reset', {
     method: 'POST',
   })
+}
+
+export function searchCircularIntelligenceOnServer(query: string) {
+  return requestJson<CircularIntelligencePayload>(
+    '/circular-intelligence/search',
+    {
+      method: 'POST',
+      body: JSON.stringify({ query }),
+    },
+    8000,
+  )
 }
 
 export type ReportQuery = Partial<Pick<ReportFilters, 'department' | 'semester' | 'date' | 'status' | 'role' | 'actorId'>>
