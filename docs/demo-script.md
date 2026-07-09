@@ -29,6 +29,7 @@ Dr. Priya Menon / Academic Admin
 Show:
 
 - Login identity chip: `SQLite identity`
+- Action Center as the first admin workspace
 - Academic sync chip: `SQLite backend`
 - Academic operations dashboard
 - Timetable mapping
@@ -38,7 +39,17 @@ Show:
 - Imports section
 - Reports section
 
-## 3. Master Data Demo
+## 3. Action Center Demo
+
+In Action Center:
+
+1. Show the sync chip: `SQLite backend connected`.
+2. Point out open actions, critical items, pending leave, and attendance gaps.
+3. Search for `Rahul` to show leave and attendance follow-up work.
+4. Open an action to jump into the related module.
+5. Mark an action reviewed and show that the audit trail records the action.
+
+## 4. Master Data Demo
 
 In Master Data:
 
@@ -49,7 +60,7 @@ In Master Data:
 5. Try a duplicate subject code to show validation.
 6. Show that audit events are recorded.
 
-## 4. Knowledge RAG Demo
+## 5. Knowledge RAG Demo
 
 In Knowledge:
 
@@ -60,7 +71,7 @@ In Knowledge:
 5. As Admin, paste or load a plain text policy document and save it.
 6. Search a tag such as `circular` or `placement` to show source-backed retrieval.
 
-## 5. Circular Intelligence Demo
+## 6. Circular Intelligence Demo
 
 In Circulars:
 
@@ -70,7 +81,7 @@ In Circulars:
 4. Mark a notice read and show unread counts update.
 5. Publish a new circular as Admin and search for a term from the message.
 
-## 6. Import Center Demo
+## 7. Import Center Demo
 
 In Imports:
 
@@ -81,7 +92,7 @@ In Imports:
 5. Export rejected rows as CSV or XLSX for office correction.
 6. Import valid rows and show that the backend records an audit event.
 
-## 7. Reports Demo
+## 8. Reports Demo
 
 In Reports:
 
@@ -93,7 +104,7 @@ In Reports:
 6. Export one report as CSV, PDF, and XLSX and show that audit events are recorded.
 7. Use Print to show the office-friendly print layout.
 
-## 8. Academic Workflow Demo
+## 9. Academic Workflow Demo
 
 1. Map a timetable period.
 2. Select a timetable slot.
@@ -101,7 +112,7 @@ In Reports:
 4. Submit a period-wise leave request.
 5. Approve or reject the leave.
 
-## 9. Faculty Login
+## 10. Faculty Login
 
 Logout and choose:
 
@@ -112,6 +123,7 @@ Prof. Anjali Rao / Faculty
 Show:
 
 - Faculty-only academic workspace
+- My Actions view with assigned leave, workload, and attendance marking gaps
 - Assigned periods
 - Leave approval queue
 - Circular intelligence limited to faculty-visible notices
@@ -119,7 +131,7 @@ Show:
 - Read-only Master Data view for department and assigned subjects
 - Limited My Reports view for assigned leave and workload backed by backend RBAC
 
-## 10. Student Login
+## 11. Student Login
 
 Logout and choose:
 
@@ -134,10 +146,10 @@ Show:
 - Period-wise leave application
 - Circular intelligence limited to student-visible notices
 - Knowledge search for student policy questions
-- No admin Imports, Master Data, or Reports code loaded in the sidebar
+- No admin Imports, Master Data, Action Center, or Reports code loaded in the sidebar
 
 ## Closing Line
 
 Use this explanation:
 
-> CampusOps AI is a full-stack local prototype. The frontend delivers role-specific college operations workflows, while the backend provides SQLite persistence for users, sessions, academics, imports, knowledge documents, master data, staff, circulars, reports, and audit logs. It works without paid services and can be upgraded to a campus-wide deployment with password or SSO authentication and PostgreSQL.
+> CampusOps AI is a full-stack local prototype. The frontend delivers role-specific college operations workflows, while the backend provides SQLite persistence for users, sessions, academics, imports, knowledge documents, master data, staff, circulars, action-center events, reports, and audit logs. It works without paid services and can be upgraded to a campus-wide deployment with password or SSO authentication and PostgreSQL.

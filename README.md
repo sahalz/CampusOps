@@ -16,6 +16,7 @@ CampusOps/
 
 - Role-based Admin, Faculty, and Student workspaces
 - SQLite-backed demo users, login sessions, and backend role checks for protected admin/faculty APIs
+- Action Center for daily admin/faculty priorities across attendance, leave, workload, circulars, timetable mapping, and master data
 - SQLite-backed academic operations: classes, teachers, students, subjects, timetable, attendance, leave requests, approvals
 - Departments and subjects master data with SQLite-backed persistence
 - Staff register, admin circulars, and circular read receipts with SQLite-backed persistence
@@ -62,7 +63,7 @@ The project is designed for a reliable college presentation and a realistic adop
 
 - The frontend is professional, responsive, and role-aware.
 - The backend uses local SQLite, so the demo works without internet or paid services.
-- Users, sessions, academic operations, master data, staff profiles, circulars, read receipts, knowledge documents, reports, and audit logs are persisted outside the browser.
+- Users, sessions, academic operations, master data, staff profiles, circulars, read receipts, knowledge documents, action-center events, reports, and audit logs are persisted outside the browser.
 - Admin imports validate and commit accepted rows through SQLite-backed APIs before changing operational data.
 - Policy search is grounded in SQLite-backed chunks with source citations for office use.
 - Browser localStorage remains as a fallback so the demo can continue if the backend is temporarily offline.
@@ -81,4 +82,4 @@ Use the Admin account first:
 - `Dr. Priya Menon`
 - Role: Admin
 
-Open Knowledge to ask an attendance or leave policy question and show citations. Then open Imports after Master Data to show CSV/XLSX templates, preview validation, rejected-row exports, and SQLite commit. Finish with Reports to show CSV, PDF, and XLSX export, print-friendly reporting, and the SQLite sync status.
+Open Action Center first to show the daily admin inbox, then open Knowledge to ask an attendance or leave policy question and show citations. Open Imports after Master Data to show CSV/XLSX templates, preview validation, rejected-row exports, and SQLite commit. Finish with Reports to show CSV, PDF, and XLSX export, print-friendly reporting, and the SQLite sync status.

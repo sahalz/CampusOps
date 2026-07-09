@@ -3133,6 +3133,249 @@ function getDailyOperationsSummary(context, filters) {
   }
 }
 
+function academicDayForDate(dateValue) {
+  if (!dateValue) {
+    return ''
+  }
+
+  const date = new Date(`${dateValue}T12:00:00Z`)
+  if (Number.isNaN(date.getTime())) {
+    return ''
+  }
+
+  return date.toLocaleDateString('en-US', { weekday: 'long', timeZone: 'UTC' })
+}
+
+function actionSeverityRank(severity) {
+  return {
+    critical: 0,
+    warning: 1,
+    info: 2,
+    success: 3,
+  }[severity] ?? 4
+}
+
+function makeActionItem(input) {
+  return {
+    id: input.id,
+    category: input.category,
+    severity: input.severity,
+    title: input.title,
+    detail: input.detail,
+    owner: input.owner,
+    dueDate: input.dueDate ?? '',
+    source: input.source,
+    targetSection: input.targetSection,
+    actionLabel: input.actionLabel,
+    status: 'open',
+    metricLabel: input.metricLabel ?? '',
+    metricValue: input.metricValue ?? '',
+  }
+}
+
+function getAttendanceGapActionItems(context, filters) {
+  const indexes = buildIndexes(context)
+  const attendanceDates = context.attendance.map((record) => record.date).sort()
+  const selectedDate = filters.date || attendanceDates.at(-1) || currentDateString()
+  const selectedDay = academicDayForDate(selectedDate)
+
+  if (!academicDays.has(selectedDay)) {
+    return []
+  }
+
+  const markedKeys = new Set(
+    context.attendance
+      .filter((record) => record.date === selectedDate)
+      .map((record) => `${record.slotId}:${record.studentId}`),
+  )
+
+  return context.slots
+    .filter((slot) => slot.day === selectedDay)
+    .filter((slot) => filters.role !== 'faculty' || !filters.actorId || slot.teacherId === filters.actorId)
+    .map((slot) => {
+      const section = indexes.sectionById.get(slot.classSectionId)
+      const teacher = indexes.teacherById.get(slot.teacherId)
+      const subject = indexes.subjectById.get(slot.subjectId)
+      const department = getSlotDepartment(slot, indexes)
+      const students = context.students.filter((student) => student.classSectionId === slot.classSectionId)
+      const missingCount = students.filter((student) => !markedKeys.has(`${slot.id}:${student.id}`)).length
+
+      return {
+        slot,
+        section,
+        teacher,
+        subject,
+        department,
+        students,
+        missingCount,
+      }
+    })
+    .filter((row) => row.missingCount > 0)
+    .filter((row) => reportDepartmentMatches(row.department, filters.department))
+    .filter((row) => reportSemesterMatches(row.section?.semester, filters.semester))
+    .map((row) =>
+      makeActionItem({
+        id: `ACTION-ATT-${selectedDate}-${row.slot.id}`,
+        category: 'Attendance',
+        severity: row.missingCount === row.students.length ? 'critical' : 'warning',
+        title: `Attendance not fully marked: ${row.section?.name ?? 'Class'} P${row.slot.periodNumber}`,
+        detail: `${row.missingCount} of ${row.students.length} students still need attendance for ${row.subject?.name ?? 'mapped subject'} on ${selectedDate}.`,
+        owner: row.teacher?.name ?? 'Faculty',
+        dueDate: selectedDate,
+        source: 'Daily attendance check',
+        targetSection: 'academics',
+        actionLabel: 'Open academics',
+        metricLabel: 'Missing',
+        metricValue: `${row.missingCount}/${row.students.length}`,
+      }),
+    )
+}
+
+function getActionCenterItems(context, filters) {
+  const attendanceGaps = getAttendanceGapActionItems(context, filters)
+  const pendingLeaves = getPendingLeaveReport(context, { ...filters, status: 'pending' }).map((leave) =>
+    makeActionItem({
+      id: `ACTION-LEAVE-${leave.id}`,
+      category: 'Leave',
+      severity: leave.date < currentDateString() ? 'critical' : 'warning',
+      title: `Leave approval pending: ${leave.studentName}`,
+      detail: `${leave.rollNo} requested ${leave.reason.toLowerCase()} for ${leave.subjectName}, period ${leave.periodNumber}.`,
+      owner: leave.reviewerName,
+      dueDate: leave.date,
+      source: 'Pending leave report',
+      targetSection: 'academics',
+      actionLabel: 'Review leave',
+      metricLabel: 'Request',
+      metricValue: leave.id,
+    }),
+  )
+  const facultyWorkload = getFacultyWorkloadReport(context, { ...filters, status: 'overloaded' }).map((teacher) =>
+    makeActionItem({
+      id: `ACTION-WORKLOAD-${teacher.teacherId}`,
+      category: 'Workload',
+      severity: teacher.assignedSlots >= 4 ? 'critical' : 'warning',
+      title: `High timetable load: ${teacher.teacherName}`,
+      detail: `${teacher.assignedSlots} slots across ${teacher.uniqueSubjects} subjects and ${teacher.classSections} class sections.`,
+      owner: teacher.teacherName,
+      source: 'Faculty workload report',
+      targetSection: filters.role === 'faculty' ? 'reports' : 'staff',
+      actionLabel: filters.role === 'faculty' ? 'Open my reports' : 'Open staff',
+      metricLabel: 'Slots',
+      metricValue: teacher.assignedSlots,
+    }),
+  )
+
+  if (filters.role === 'faculty') {
+    return [...attendanceGaps, ...pendingLeaves, ...facultyWorkload]
+  }
+
+  const attendanceShortage = getAttendanceShortageReport(context, { ...filters, status: 'shortage' }).map((student) =>
+    makeActionItem({
+      id: `ACTION-SHORTAGE-${student.studentId}`,
+      category: 'Attendance',
+      severity: student.attendancePercent < 60 ? 'critical' : 'warning',
+      title: `Attendance shortage: ${student.studentName}`,
+      detail: `${student.rollNo} is at ${student.attendancePercent}% attendance in ${student.className}; last marked ${student.lastMarkedDate}.`,
+      owner: student.className,
+      dueDate: student.lastMarkedDate,
+      source: 'Attendance shortage report',
+      targetSection: 'reports',
+      actionLabel: 'Open reports',
+      metricLabel: 'Attendance',
+      metricValue: `${student.attendancePercent}%`,
+    }),
+  )
+  const coverageGaps = getDepartmentSubjectCoverageReport(context, { ...filters, status: 'unmapped' })
+    .filter((row) => row.unmappedSubjects > 0)
+    .map((row) =>
+      makeActionItem({
+        id: `ACTION-COVERAGE-${row.departmentId}-${row.semester}`,
+        category: 'Mapping',
+        severity: 'warning',
+        title: `Subject coverage gap: ${row.departmentName} Sem ${row.semester}`,
+        detail: `${row.unmappedSubjects} subjects are not mapped in timetable: ${row.unmappedSubjectCodes}.`,
+        owner: row.departmentCode,
+        source: 'Department subject coverage report',
+        targetSection: 'imports',
+        actionLabel: 'Open imports',
+        metricLabel: 'Coverage',
+        metricValue: `${row.coveragePercent}%`,
+      }),
+    )
+  const inactiveRecords = getInactiveMasterDataReport(context, { ...filters, status: 'inactive' }).map((record) =>
+    makeActionItem({
+      id: `ACTION-INACTIVE-${record.type}-${record.id}`,
+      category: 'Master data',
+      severity: 'info',
+      title: `Inactive ${record.type.toLowerCase()}: ${record.name}`,
+      detail: `${record.code} is inactive; owner ${record.owner}. ${record.detail}.`,
+      owner: record.owner,
+      source: 'Inactive master data report',
+      targetSection: 'master-data',
+      actionLabel: 'Open master data',
+      metricLabel: 'Status',
+      metricValue: record.status,
+    }),
+  )
+  const circulars = getCircularEngagementReport(context, { ...filters, status: 'unread' })
+    .filter((circular) => circular.active && circular.unreadCount > 0)
+    .map((circular) =>
+      makeActionItem({
+        id: `ACTION-CIRCULAR-${circular.id}`,
+        category: 'Circulars',
+        severity: circular.priority === 'urgent' ? 'critical' : 'warning',
+        title: `Circular unread: ${circular.title}`,
+        detail: `${circular.unreadCount} recipients have not read this ${circular.priority} notice for ${circular.audience}.`,
+        owner: circular.audience,
+        dueDate: circular.publishedAt,
+        source: 'Circular engagement report',
+        targetSection: 'circulars',
+        actionLabel: 'Open circulars',
+        metricLabel: 'Read rate',
+        metricValue: `${circular.readRate}%`,
+      }),
+    )
+
+  return [
+    ...attendanceGaps,
+    ...pendingLeaves,
+    ...attendanceShortage,
+    ...facultyWorkload,
+    ...coverageGaps,
+    ...inactiveRecords,
+    ...circulars,
+  ]
+}
+
+function summarizeActionItems(items) {
+  const count = (predicate) => items.filter(predicate).length
+
+  return {
+    total: items.length,
+    critical: count((item) => item.severity === 'critical'),
+    warning: count((item) => item.severity === 'warning'),
+    info: count((item) => item.severity === 'info'),
+    attendanceGaps: count((item) => item.source === 'Daily attendance check'),
+    pendingLeaves: count((item) => item.category === 'Leave'),
+    shortageStudents: count((item) => item.source === 'Attendance shortage report'),
+    overloadedFaculty: count((item) => item.category === 'Workload'),
+    coverageGaps: count((item) => item.category === 'Mapping'),
+    inactiveRecords: count((item) => item.category === 'Master data'),
+    circularsWithUnread: count((item) => item.category === 'Circulars'),
+  }
+}
+
+function getActionCenterCategories(items) {
+  const categoryCounts = new Map()
+  items.forEach((item) => {
+    categoryCounts.set(item.category, (categoryCounts.get(item.category) ?? 0) + 1)
+  })
+
+  return Array.from(categoryCounts.entries())
+    .map(([label, count]) => ({ label, count }))
+    .sort((first, second) => second.count - first.count || first.label.localeCompare(second.label))
+}
+
 function getReportFilterOptions(context) {
   const departmentNames = new Set()
   context.masterDepartments.forEach((department) => departmentNames.add(department.name))
@@ -3153,6 +3396,33 @@ function getReportFilterOptions(context) {
     semesters: Array.from(semesters).sort((first, second) => first - second),
     dates: Array.from(dates).sort().reverse(),
     statuses: ['all', 'shortage', 'pending', 'approved', 'rejected', 'overloaded', 'unmapped', 'inactive', 'unread'],
+  }
+}
+
+export function getActionCenter(filters = {}) {
+  const cleanFilters = normalizeReportFilters(filters)
+  const context = getReportContext()
+  const items = getActionCenterItems(context, cleanFilters).sort((first, second) => {
+    const severityDelta = actionSeverityRank(first.severity) - actionSeverityRank(second.severity)
+    return severityDelta || first.dueDate.localeCompare(second.dueDate) || first.title.localeCompare(second.title)
+  })
+  const filterOptions = getReportFilterOptions(context)
+
+  return {
+    version: 1,
+    source: 'sqlite',
+    generatedAt: new Date().toISOString(),
+    filters: cleanFilters,
+    filterOptions: {
+      departments: filterOptions.departments,
+      semesters: filterOptions.semesters,
+      dates: filterOptions.dates,
+      categories: getActionCenterCategories(items).map((category) => category.label),
+      severities: ['all', 'critical', 'warning', 'info'],
+    },
+    summary: summarizeActionItems(items),
+    categories: getActionCenterCategories(items),
+    items,
   }
 }
 
@@ -3229,6 +3499,23 @@ export function createReportAuditEvent(input) {
     action,
     outcome,
     severity: input?.severity === 'warning' ? 'warning' : 'success',
+  })
+}
+
+export function createActionAuditEvent(input) {
+  const actor = safeString(input?.actor) || 'CampusOps Admin'
+  const action = safeString(input?.action) || 'Action center activity'
+  const actionItemTitle = safeString(input?.actionItemTitle) || 'Action item'
+  const outcome = safeString(input?.outcome) || `${actionItemTitle} updated from Action Center.`
+  const severity = ['info', 'success', 'warning', 'critical'].includes(input?.severity)
+    ? input.severity
+    : 'success'
+
+  return createAuditEvent({
+    actor,
+    action,
+    outcome,
+    severity,
   })
 }
 

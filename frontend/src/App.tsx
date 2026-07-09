@@ -12,6 +12,7 @@ import {
   Gauge,
   GitBranch,
   IdCard,
+  Inbox,
   LayoutDashboard,
   LockKeyhole,
   LogOut,
@@ -71,6 +72,9 @@ const KnowledgeCenter = lazy(() =>
 const ReportsCenter = lazy(() =>
   import('./components/reports/ReportsCenter').then((module) => ({ default: module.ReportsCenter })),
 )
+const ActionCenter = lazy(() =>
+  import('./components/actions/ActionCenter').then((module) => ({ default: module.ActionCenter })),
+)
 
 const roleLabels: Record<Role, string> = {
   student: 'Student',
@@ -117,6 +121,11 @@ const samplePrompts = [
 ]
 
 const sectionDescriptions: Record<string, { eyebrow: string; title: string; copy: string }> = {
+  'action-center': {
+    eyebrow: 'Daily action',
+    title: 'Action Center',
+    copy: 'Prioritized admin and faculty work from attendance, leave, circulars, workload, timetable mapping, and master data.',
+  },
   academics: {
     eyebrow: 'Daily operations',
     title: 'Academics',
@@ -210,7 +219,7 @@ function App() {
   const [routeResult, setRouteResult] = useState<RouteResult | null>(null)
   const [approvals, setApprovals] = useState<ApprovalItem[]>(seededApprovals)
   const [auditEvents, setAuditEvents] = useState<AuditEvent[]>(seededAuditEvents)
-  const [activeNavId, setActiveNavId] = useState('academics')
+  const [activeNavId, setActiveNavId] = useState('action-center')
   const session = sessionUser ?? accounts.find((account) => account.id === sessionId) ?? null
   const activeRole = session?.role ?? 'admin'
 
@@ -238,6 +247,12 @@ function App() {
   const navItems = useMemo(
     () =>
       [
+        {
+          id: 'action-center',
+          label: activeRole === 'admin' ? 'Action Center' : 'My Actions',
+          icon: Inbox,
+          roles: ['admin', 'faculty'] as Role[],
+        },
         {
           id: 'academics',
           label: 'Academics',
@@ -594,6 +609,28 @@ function App() {
             onAuditEvent={appendAuditEvent}
           />
         </div>
+        ) : null}
+
+        {activeNavId === 'action-center' && activeRole !== 'student' ? (
+          <div id="section-action-center" className="section-anchor active-section">
+            <Suspense
+              fallback={
+                <div className="action-loading">
+                  <Inbox size={18} />
+                  <strong>Loading action center</strong>
+                  <span>Preparing daily admin and faculty priorities.</span>
+                </div>
+              }
+            >
+              <ActionCenter
+                currentRole={session.role}
+                actorId={session.actorId}
+                userName={session.name}
+                onAuditEvent={appendAuditEvent}
+                onNavigate={setActiveNavId}
+              />
+            </Suspense>
+          </div>
         ) : null}
 
         {activeNavId === 'master-data' && activeRole !== 'student' ? (

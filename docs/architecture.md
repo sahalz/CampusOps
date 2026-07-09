@@ -17,6 +17,7 @@ flowchart LR
 - Role-aware UI for Admin, Faculty, and Student
 - Backend-backed login cards with demo-safe offline fallback
 - Lazy-loaded heavier modules so students do not download admin-only screens
+- Backend-backed Action Center is lazy-loaded for admin/faculty daily triage
 - Admin-only Import Center is lazy-loaded separately from reports and student workflows
 - Backend-backed Knowledge Center is lazy-loaded and provides source-cited policy search
 - Responsive dashboard layout for presentation and daily operations
@@ -43,7 +44,9 @@ flowchart LR
 - Circular intelligence searches visible notices, unread status, urgent items, and deadlines
 - Knowledge documents and searchable policy chunks
 - Validated admin imports for students, staff profiles, subjects, and timetable slots
+- Action Center items generated from live attendance, leave, workload, circular, timetable, and master-data signals
 - Administrative reports generated from SQLite-backed operational data
+- Action Center open/review actions
 - Import commit actions and rejected-row export actions
 - Report export actions for CSV, PDF, and XLSX downloads
 - Audit events
@@ -51,9 +54,10 @@ flowchart LR
 ## Backend RBAC
 
 - Admin/faculty report requests require a valid backend session.
+- Admin/faculty Action Center requests require a valid backend session.
 - Admin-only writes such as imports, staff reset, circular publish/reset, and master-data edits are checked on the backend.
-- Faculty report payloads are limited to assigned leave, personal workload, and daily summary data.
-- Students do not load the Imports or Reports modules and cannot access those endpoints with a student session.
+- Faculty report and Action Center payloads are limited to assigned leave, personal workload, and their own attendance marking gaps.
+- Students do not load the Imports, Reports, or Action Center modules and cannot access those endpoints with a student session.
 - All roles can search policy knowledge with a valid session; only admins can add or reset knowledge documents.
 - All roles can ask circular questions, but answers are limited to notices visible to their session role and actor.
 
@@ -61,7 +65,7 @@ flowchart LR
 
 The frontend mirrors important state into browser localStorage after backend loads and saves. If the local backend is offline during a presentation, demo login, Staff Register, Circulars, Master Data, and academic workflows can still show their last browser backup instead of failing blank.
 
-Imports, policy knowledge, and reports are intentionally backend-first because they validate, search, and aggregate multiple operational tables. The Import Center, Knowledge Center, and Reports Center show clear SQLite sync status so admins can tell whether data is live.
+Imports, policy knowledge, Action Center, and reports are intentionally backend-first because they validate, search, and aggregate multiple operational tables. The Import Center, Knowledge Center, Action Center, and Reports Center show clear SQLite sync status so admins can tell whether data is live.
 
 ## Production Upgrade Path
 

@@ -481,6 +481,72 @@ export type DailyOperationsSummary = {
   activeSubjects: number
 }
 
+export type ActionSeverity = 'critical' | 'warning' | 'info' | 'success'
+
+export type ActionCategory =
+  | 'Attendance'
+  | 'Leave'
+  | 'Workload'
+  | 'Mapping'
+  | 'Master data'
+  | 'Circulars'
+
+export type ActionTargetSection =
+  | 'academics'
+  | 'reports'
+  | 'circulars'
+  | 'staff'
+  | 'master-data'
+  | 'imports'
+
+export type ActionCenterItem = {
+  id: string
+  category: ActionCategory
+  severity: ActionSeverity
+  title: string
+  detail: string
+  owner: string
+  dueDate: string
+  source: string
+  targetSection: ActionTargetSection
+  actionLabel: string
+  status: 'open'
+  metricLabel: string
+  metricValue: string | number
+}
+
+export type ActionCenterPayload = {
+  version: 1
+  source: 'sqlite'
+  generatedAt: string
+  filters: ReportFilters
+  filterOptions: {
+    departments: string[]
+    semesters: number[]
+    dates: string[]
+    categories: ActionCategory[]
+    severities: Array<'all' | ActionSeverity>
+  }
+  summary: {
+    total: number
+    critical: number
+    warning: number
+    info: number
+    attendanceGaps: number
+    pendingLeaves: number
+    shortageStudents: number
+    overloadedFaculty: number
+    coverageGaps: number
+    inactiveRecords: number
+    circularsWithUnread: number
+  }
+  categories: Array<{
+    label: ActionCategory
+    count: number
+  }>
+  items: ActionCenterItem[]
+}
+
 export type ReportsPayload = {
   version: 1
   source: 'sqlite'

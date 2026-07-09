@@ -1,4 +1,5 @@
 import type {
+  ActionCenterPayload,
   AttendanceRecord,
   AuthSession,
   AuditEvent,
@@ -88,6 +89,14 @@ type ReportActionInput = {
   actor: string
   action: string
   reportName: string
+  outcome?: string
+  severity?: AuditEvent['severity']
+}
+
+type ActionCenterActionInput = {
+  actor: string
+  action: string
+  actionItemTitle: string
   outcome?: string
   severity?: AuditEvent['severity']
 }
@@ -317,6 +326,8 @@ export function searchCircularIntelligenceOnServer(query: string) {
 
 export type ReportQuery = Partial<Pick<ReportFilters, 'department' | 'semester' | 'date' | 'status' | 'role' | 'actorId'>>
 
+export type ActionCenterQuery = Partial<Pick<ReportFilters, 'department' | 'semester' | 'date' | 'role' | 'actorId'>>
+
 export function fetchReports(query: ReportQuery = {}) {
   const searchParams = new URLSearchParams()
   Object.entries(query).forEach(([key, value]) => {
@@ -327,6 +338,26 @@ export function fetchReports(query: ReportQuery = {}) {
 
   const queryString = searchParams.toString()
   return requestJson<ReportsPayload>(`/reports${queryString ? `?${queryString}` : ''}`)
+}
+
+export function fetchActionCenter(query: ActionCenterQuery = {}) {
+  const searchParams = new URLSearchParams()
+  Object.entries(query).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && String(value).length > 0) {
+      searchParams.set(key, String(value))
+    }
+  })
+
+  const queryString = searchParams.toString()
+  return requestJson<ActionCenterPayload>(`/action-center${queryString ? `?${queryString}` : ''}`)
+}
+
+export async function recordActionCenterActionOnServer(action: ActionCenterActionInput) {
+  const response = await requestJson<AuditEventResponse>('/action-center/actions', {
+    method: 'POST',
+    body: JSON.stringify(action),
+  })
+  return response.auditEvent
 }
 
 export async function recordReportActionOnServer(action: ReportActionInput) {

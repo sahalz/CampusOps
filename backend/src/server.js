@@ -1,5 +1,6 @@
 import { createServer } from 'node:http'
 import {
+  createActionAuditEvent,
   createAuthSession,
   createAuditEvent,
   createDepartment,
@@ -12,6 +13,7 @@ import {
   createSubject,
   commitImportRows,
   deleteAuthSession,
+  getActionCenter,
   getAcademicState,
   getAuditEvents,
   getAuthSession,
@@ -649,6 +651,41 @@ async function handleReports(request, response, pathname, searchParams) {
   notFound(response)
 }
 
+async function handleActionCenter(request, response, pathname, searchParams) {
+  if (pathname === '/api/action-center') {
+    if (request.method !== 'GET') {
+      methodNotAllowed(response)
+      return
+    }
+
+    const session = requireRoles(request, response, ['admin', 'faculty'])
+    if (!session) {
+      return
+    }
+
+    sendJson(response, 200, getActionCenter({ ...readReportFilters(searchParams), role: session.user.role, actorId: session.user.actorId }))
+    return
+  }
+
+  if (pathname === '/api/action-center/actions') {
+    if (request.method !== 'POST') {
+      methodNotAllowed(response)
+      return
+    }
+
+    if (!requireRoles(request, response, ['admin', 'faculty'])) {
+      return
+    }
+
+    sendJson(response, 201, {
+      auditEvent: createActionAuditEvent(await readJson(request)),
+    })
+    return
+  }
+
+  notFound(response)
+}
+
 async function handleImports(request, response, pathname) {
   if (pathname === '/api/import/preview') {
     if (request.method !== 'POST') {
@@ -810,6 +847,11 @@ const server = createServer(async (request, response) => {
 
     if (pathname.startsWith('/api/reports')) {
       await handleReports(request, response, pathname, searchParams)
+      return
+    }
+
+    if (pathname.startsWith('/api/action-center')) {
+      await handleActionCenter(request, response, pathname, searchParams)
       return
     }
 
