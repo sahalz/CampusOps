@@ -542,7 +542,47 @@ db.exec(`
     token_count INTEGER NOT NULL,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
+
+  CREATE TABLE IF NOT EXISTS institution_profile (
+    id TEXT PRIMARY KEY CHECK (id = 'primary'),
+    name TEXT NOT NULL,
+    short_name TEXT NOT NULL,
+    code TEXT NOT NULL,
+    academic_year TEXT NOT NULL,
+    current_term TEXT NOT NULL,
+    timezone TEXT NOT NULL,
+    attendance_threshold INTEGER NOT NULL CHECK (attendance_threshold BETWEEN 1 AND 100),
+    email_domain TEXT NOT NULL,
+    website TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
 `)
+
+db.prepare(`
+  INSERT OR IGNORE INTO institution_profile (
+    id,
+    name,
+    short_name,
+    code,
+    academic_year,
+    current_term,
+    timezone,
+    attendance_threshold,
+    email_domain,
+    website
+  )
+  VALUES ('primary', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`).run(
+  'CampusOps Demonstration College',
+  'CampusOps College',
+  'COC',
+  '2026-27',
+  'Odd Semester',
+  'Asia/Kolkata',
+  75,
+  'campus.edu',
+  'https://campus.edu',
+)
 
 const insertDepartmentStatement = db.prepare(`
   INSERT INTO departments (id, name, code, faculty_in_charge, office_room, status)
@@ -2540,6 +2580,7 @@ function getReportContext() {
 
   return {
     ...academic,
+    institutionProfile: getInstitutionProfile(),
     masterDepartments,
     masterSubjects,
     staffProfiles,
@@ -2568,6 +2609,7 @@ function getSlotDepartment(slot, indexes) {
 function getAttendanceShortageReport(context, filters) {
   const indexes = buildIndexes(context)
   const grouped = new Map()
+  const attendanceThreshold = context.institutionProfile?.attendanceThreshold ?? 75
 
   context.attendance.forEach((record) => {
     if (filters.date && record.date !== filters.date) {
@@ -2615,7 +2657,7 @@ function getAttendanceShortageReport(context, filters) {
       ...row,
       attendancePercent: row.totalMarked > 0 ? Math.round((row.attended / row.totalMarked) * 100) : 0,
     }))
-    .filter((row) => row.totalMarked > 0 && row.attendancePercent < 75)
+    .filter((row) => row.totalMarked > 0 && row.attendancePercent < attendanceThreshold)
     .filter((row) => filters.status === 'all' || filters.status === 'shortage')
     .sort((first, second) => first.attendancePercent - second.attendancePercent || first.rollNo.localeCompare(second.rollNo))
 }
@@ -3273,7 +3315,7 @@ function getActionCenterItems(context, filters) {
     makeActionItem({
       id: `ACTION-SHORTAGE-${student.studentId}`,
       category: 'Attendance',
-      severity: student.attendancePercent < 60 ? 'critical' : 'warning',
+      severity: student.attendancePercent < Math.max(1, context.institutionProfile.attendanceThreshold - 15) ? 'critical' : 'warning',
       title: `Attendance shortage: ${student.studentName}`,
       detail: `${student.rollNo} is at ${student.attendancePercent}% attendance in ${student.className}; last marked ${student.lastMarkedDate}.`,
       owner: student.className,
@@ -3412,6 +3454,7 @@ export function getActionCenter(filters = {}) {
     version: 1,
     source: 'sqlite',
     generatedAt: new Date().toISOString(),
+    attendanceThreshold: context.institutionProfile.attendanceThreshold,
     filters: cleanFilters,
     filterOptions: {
       departments: filterOptions.departments,
@@ -3446,6 +3489,7 @@ export function getReports(filters = {}) {
     version: 1,
     source: 'sqlite',
     generatedAt: new Date().toISOString(),
+    attendanceThreshold: context.institutionProfile.attendanceThreshold,
     filters: cleanFilters,
     filterOptions: getReportFilterOptions(context),
     kpis: {
@@ -3519,6 +3563,231 @@ export function createActionAuditEvent(input) {
   })
 }
 
+export function getInstitutionProfile() {
+  return db
+    .prepare(`
+      SELECT
+        name,
+        short_name AS shortName,
+        code,
+        academic_year AS academicYear,
+        current_term AS currentTerm,
+        timezone,
+        attendance_threshold AS attendanceThreshold,
+        email_domain AS emailDomain,
+        website,
+        updated_at AS updatedAt
+      FROM institution_profile
+      WHERE id = 'primary'
+    `)
+    .get()
+}
+
+function getInstitutionReadiness(profile, stats) {
+  const steps = [
+    {
+      id: 'identity',
+      label: 'College identity',
+      detail: 'Replace the demonstration identity with your institution details.',
+      complete: !profile.name.toLowerCase().includes('demonstration'),
+      targetSection: 'college-setup',
+    },
+    {
+      id: 'departments',
+      label: 'Departments',
+      detail: 'Add at least one active academic department.',
+      complete: stats.departments > 0,
+      targetSection: 'master-data',
+    },
+    {
+      id: 'subjects',
+      label: 'Subject catalog',
+      detail: 'Create the subjects used by timetables and reports.',
+      complete: stats.subjects > 0,
+      targetSection: 'master-data',
+    },
+    {
+      id: 'people',
+      label: 'Students and staff',
+      detail: 'Load active student and staff registers.',
+      complete: stats.students > 0 && stats.staff > 0,
+      targetSection: 'imports',
+    },
+    {
+      id: 'timetable',
+      label: 'Timetable mapping',
+      detail: 'Map subjects, faculty, rooms, and class periods.',
+      complete: stats.timetableSlots > 0,
+      targetSection: 'academics',
+    },
+    {
+      id: 'knowledge',
+      label: 'Policy knowledge',
+      detail: 'Add institutional policies for cited office answers.',
+      complete: stats.knowledgeDocuments > 0,
+      targetSection: 'knowledge',
+    },
+    {
+      id: 'communications',
+      label: 'Campus communication',
+      detail: 'Publish a circular and validate audience targeting.',
+      complete: stats.circulars > 0,
+      targetSection: 'circulars',
+    },
+  ]
+  const completed = steps.filter((step) => step.complete).length
+
+  return {
+    score: Math.round((completed / steps.length) * 100),
+    completed,
+    total: steps.length,
+    steps,
+  }
+}
+
+export function getInstitutionState(sessionUser = { role: 'admin', actorId: '', name: 'CampusOps' }) {
+  const profile = getInstitutionProfile()
+  const academic = getAcademicState()
+  const circulars = getCirculars()
+  const stats = {
+    departments: getDepartments().filter((department) => department.status === 'active').length,
+    subjects: getSubjects().filter((subject) => subject.status === 'active').length,
+    students: academic.students.length,
+    staff: getStaffProfiles().filter((staff) => staff.status === 'active').length,
+    classSections: academic.classSections.length,
+    timetableSlots: academic.slots.length,
+    attendanceRecords: academic.attendance.length,
+    pendingLeaves: academic.leaves.filter((leave) => leave.status === 'pending').length,
+    circulars: circulars.length,
+    knowledgeDocuments: getKnowledgeDocuments().filter((document) => document.status === 'active').length,
+  }
+
+  let dashboard
+  if (sessionUser.role === 'student') {
+    const student = academic.students.find((item) => item.id === sessionUser.actorId)
+    const attendance = academic.attendance.filter((record) => record.studentId === sessionUser.actorId)
+    const attended = attendance.filter((record) => ['present', 'excused'].includes(record.status)).length
+    const receipts = new Set(
+      getCircularReadReceipts()
+        .filter((receipt) => receipt.actorId === sessionUser.actorId)
+        .map((receipt) => receipt.circularId),
+    )
+    const visibleActiveCirculars = circulars.filter(
+      (circular) => isCircularActive(circular) && isCircularVisibleForActor(circular, sessionUser, academic),
+    )
+
+    dashboard = {
+      attendancePercent: attendance.length > 0 ? Math.round((attended / attendance.length) * 100) : null,
+      scheduledPeriods: student
+        ? academic.slots.filter((slot) => slot.classSectionId === student.classSectionId).length
+        : 0,
+      pendingLeaves: academic.leaves.filter(
+        (leave) => leave.studentId === sessionUser.actorId && leave.status === 'pending',
+      ).length,
+      unreadCirculars: visibleActiveCirculars.filter((circular) => !receipts.has(circular.id)).length,
+      openActions: 0,
+      criticalActions: 0,
+      attendanceGaps: 0,
+    }
+  } else {
+    const actions = getActionCenter({ role: sessionUser.role, actorId: sessionUser.actorId })
+    dashboard = {
+      attendancePercent: null,
+      scheduledPeriods: sessionUser.role === 'faculty'
+        ? academic.slots.filter((slot) => slot.teacherId === sessionUser.actorId).length
+        : academic.slots.length,
+      pendingLeaves: actions.summary.pendingLeaves,
+      unreadCirculars: actions.summary.circularsWithUnread,
+      openActions: actions.summary.total,
+      criticalActions: actions.summary.critical,
+      attendanceGaps: actions.summary.attendanceGaps,
+    }
+  }
+
+  return {
+    version: 1,
+    source: 'sqlite',
+    profile,
+    readiness: getInstitutionReadiness(profile, stats),
+    stats,
+    dashboard,
+  }
+}
+
+export function updateInstitutionProfile(input, actor = 'CampusOps Admin') {
+  const profile = {
+    name: safeString(input?.name).replace(/\s+/g, ' '),
+    shortName: safeString(input?.shortName).replace(/\s+/g, ' '),
+    code: safeString(input?.code).toUpperCase().replace(/[^A-Z0-9-]/g, '').slice(0, 12),
+    academicYear: safeString(input?.academicYear).replace(/\s+/g, ' '),
+    currentTerm: safeString(input?.currentTerm).replace(/\s+/g, ' '),
+    timezone: safeString(input?.timezone),
+    attendanceThreshold: Number(input?.attendanceThreshold),
+    emailDomain: safeString(input?.emailDomain).toLowerCase().replace(/^@/, ''),
+    website: safeString(input?.website),
+  }
+
+  const errors = []
+  if (profile.name.length < 3) errors.push('College name must contain at least 3 characters.')
+  if (profile.shortName.length < 2) errors.push('Short name must contain at least 2 characters.')
+  if (profile.code.length < 2) errors.push('College code must contain at least 2 letters or numbers.')
+  if (!profile.academicYear) errors.push('Academic year is required.')
+  if (!profile.currentTerm) errors.push('Current term is required.')
+  if (!profile.timezone) errors.push('Timezone is required.')
+  if (!Number.isInteger(profile.attendanceThreshold) || profile.attendanceThreshold < 1 || profile.attendanceThreshold > 100) {
+    errors.push('Attendance threshold must be a whole number between 1 and 100.')
+  }
+  if (!/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(profile.emailDomain)) errors.push('Enter a valid institutional email domain.')
+  if (profile.website) {
+    try {
+      const websiteUrl = new URL(profile.website)
+      if (!['http:', 'https:'].includes(websiteUrl.protocol)) errors.push('Website must use http or https.')
+    } catch {
+      errors.push('Enter a valid website URL.')
+    }
+  }
+  if (errors.length > 0) {
+    const error = new Error(errors[0])
+    error.validationErrors = errors
+    throw error
+  }
+
+  db.prepare(`
+    UPDATE institution_profile
+    SET
+      name = ?,
+      short_name = ?,
+      code = ?,
+      academic_year = ?,
+      current_term = ?,
+      timezone = ?,
+      attendance_threshold = ?,
+      email_domain = ?,
+      website = ?,
+      updated_at = CURRENT_TIMESTAMP
+    WHERE id = 'primary'
+  `).run(
+    profile.name,
+    profile.shortName,
+    profile.code,
+    profile.academicYear,
+    profile.currentTerm,
+    profile.timezone,
+    profile.attendanceThreshold,
+    profile.emailDomain,
+    profile.website,
+  )
+
+  createAuditEvent({
+    actor,
+    action: 'Updated college setup',
+    outcome: `${profile.name} profile and operating policy settings were saved.`,
+    severity: 'success',
+  })
+
+  return getInstitutionState({ role: 'admin', actorId: '', name: actor })
+}
+
 export function getDatabaseInfo() {
   return {
     path: dbPath,
@@ -3537,5 +3806,6 @@ export function getDatabaseInfo() {
     users: db.prepare('SELECT COUNT(*) AS count FROM auth_users').get().count,
     activeSessions: db.prepare('SELECT COUNT(*) AS count FROM auth_sessions').get().count,
     auditEvents: db.prepare('SELECT COUNT(*) AS count FROM audit_events').get().count,
+    institutionProfiles: db.prepare('SELECT COUNT(*) AS count FROM institution_profile').get().count,
   }
 }

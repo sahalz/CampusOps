@@ -15,15 +15,19 @@ CampusOps/
 ## What Works
 
 - Role-based Admin, Faculty, and Student workspaces
+- Role-aware Campus Home with personal metrics, priority shortcuts, and college operating context
+- Persistent College Setup for institution identity, academic year, term, timezone, email domain, and attendance shortage threshold
+- Database-backed rollout readiness checklist that guides a college from setup through master data, people, timetable, policies, and communication
 - SQLite-backed demo users, login sessions, and backend role checks for protected admin/faculty APIs
 - Action Center for daily admin/faculty priorities across attendance, leave, workload, circulars, timetable mapping, and master data
 - SQLite-backed academic operations: classes, teachers, students, subjects, timetable, attendance, leave requests, approvals
 - Departments and subjects master data with SQLite-backed persistence
 - Staff register, admin circulars, and circular read receipts with SQLite-backed persistence
 - Campus Notice Intelligence for circular Q&A, deadlines, unread counts, and source citations
-- Admin Import Center for CSV/XLSX students, staff, subjects, and timetable uploads with preview validation
+- Simple three-step Upload Data flow for PDF, CSV, and XLSX student, staff, subject, and timetable lists
+- Automatic PDF table detection, column mapping, list-type recognition, and backend validation before saving
 - Admin Reports and Export Center for attendance shortage, pending leave, workload, subject coverage, inactive records, circular engagement, and daily operations
-- Rejected import rows can be exported as CSV or XLSX for office correction
+- Uncertain or rejected import rows stay separate and can be exported as XLSX for office correction
 - Report exports in CSV, PDF, and XLSX formats with audit events
 - Policy Knowledge and RAG Center with SQLite-backed documents, chunks, search, and citations
 - Audit trail persistence through the backend
@@ -74,6 +78,7 @@ The project is designed for a reliable college presentation and a realistic adop
 - [Project structure](docs/project-structure.md)
 - [Architecture](docs/architecture.md)
 - [Demo script](docs/demo-script.md)
+- [College adoption guide](docs/college-adoption-guide.md)
 
 ## Recommended Demo Login
 
@@ -82,4 +87,4 @@ Use the Admin account first:
 - `Dr. Priya Menon`
 - Role: Admin
 
-Open Action Center first to show the daily admin inbox, then open Knowledge to ask an attendance or leave policy question and show citations. Open Imports after Master Data to show CSV/XLSX templates, preview validation, rejected-row exports, and SQLite commit. Finish with Reports to show CSV, PDF, and XLSX export, print-friendly reporting, and the SQLite sync status.
+Open Home first to show the college operating picture and rollout readiness. Continue into College Setup to replace the demonstration identity and confirm the attendance shortage threshold. Then open Action Center, Knowledge, Imports, and Reports to demonstrate the daily operating flow.

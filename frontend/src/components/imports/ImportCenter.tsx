@@ -4,15 +4,19 @@ import {
   CheckCircle2,
   Database,
   Download,
+  FileCheck2,
   FileSpreadsheet,
+  FileText,
   RefreshCw,
   Search,
+  Sparkles,
   UploadCloud,
   XCircle,
 } from 'lucide-react'
 import clsx from 'clsx'
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate'
 import { commitImportOnServer, previewImportOnServer } from '../../lib/api'
+import { detectImportKindFromHeaders, extractPdfImport, type PdfImportInsight } from '../../lib/pdfImport'
 import type {
   AuditEvent,
   ImportCellValue,
@@ -41,19 +45,19 @@ type ExportFormat = 'csv' | 'xlsx'
 const templates: ImportTemplate[] = [
   {
     kind: 'students',
-    label: 'Students',
+    label: 'Student list',
     description: 'Roll numbers, class sections, and student email records.',
     columns: ['Roll No', 'Name', 'Class Section', 'Email'],
   },
   {
     kind: 'staff',
-    label: 'Staff',
+    label: 'Staff list',
     description: 'Faculty profiles linked to teacher workload and contact data.',
     columns: ['Employee Code', 'Name', 'Department', 'Designation', 'Email', 'Phone', 'Status', 'Joined At', 'Office Room'],
   },
   {
     kind: 'subjects',
-    label: 'Subjects',
+    label: 'Subject list',
     description: 'Department subject catalogue with semester, credits, and faculty owner.',
     columns: ['Department Code', 'Semester', 'Code', 'Name', 'Credits', 'Kind', 'Default Faculty', 'Status'],
   },
@@ -315,13 +319,25 @@ function parseXlsx(buffer: ArrayBuffer) {
   return rowsToObjects(rows)
 }
 
-async function parseImportFile(file: File) {
+async function parseImportFile(file: File, preferredKind: ImportKind) {
   const filename = file.name.toLowerCase()
-  if (filename.endsWith('.xlsx')) {
-    return parseXlsx(await file.arrayBuffer())
+  if (filename.endsWith('.pdf') || file.type === 'application/pdf') {
+    return extractPdfImport(new Uint8Array(await file.arrayBuffer()), preferredKind)
   }
 
-  return parseCsv(await file.text())
+  let rows: ImportSourceRow[]
+  if (filename.endsWith('.xlsx')) {
+    rows = parseXlsx(await file.arrayBuffer())
+  } else {
+    rows = parseCsv(await file.text())
+  }
+
+  const detection = detectImportKindFromHeaders(Object.keys(rows[0] ?? {}), preferredKind)
+  return {
+    kind: detection.confidence >= 0.75 ? detection.kind : preferredKind,
+    rows,
+    insight: null,
+  }
 }
 
 function dateStamp() {
@@ -447,6 +463,9 @@ export function ImportCenter({ currentRole, userName, onAuditEvent }: ImportCent
   const [sourceRows, setSourceRows] = useState<ImportSourceRow[]>([])
   const [query, setQuery] = useState('')
   const [filename, setFilename] = useState('')
+  const [pdfInsight, setPdfInsight] = useState<PdfImportInsight | null>(null)
+  const [previewTab, setPreviewTab] = useState<'accepted' | 'rejected'>('accepted')
+  const [isDragging, setIsDragging] = useState(false)
   const [backendStatus, setBackendStatus] = useState<'checking' | 'connected' | 'offline'>('checking')
   const [syncMessage, setSyncMessage] = useState('Choose an import file to validate with SQLite.')
   const [isLoading, setIsLoading] = useState(false)
@@ -475,6 +494,8 @@ export function ImportCenter({ currentRole, userName, onAuditEvent }: ImportCent
     setPreview(null)
     setSourceRows([])
     setFilename('')
+    setPdfInsight(null)
+    setPreviewTab('accepted')
     setQuery('')
     setBackendStatus('checking')
     setSyncMessage('Choose an import file to validate with SQLite.')
@@ -529,20 +550,30 @@ export function ImportCenter({ currentRole, userName, onAuditEvent }: ImportCent
     setPreview(null)
     setSourceRows([])
     setFilename(file.name)
+    setPdfInsight(null)
+    setPreviewTab('accepted')
     setBackendStatus('checking')
     setSyncMessage('Validating import file with SQLite.')
 
     try {
-      const rows = await parseImportFile(file)
-      if (rows.length === 0) {
+      const parsed = await parseImportFile(file, activeKind)
+      if (parsed.rows.length === 0) {
         throw new Error('The file does not contain any import rows.')
       }
 
-      const payload = await previewImportOnServer(activeKind, rows)
-      setSourceRows(rows)
+      if (parsed.kind !== activeKind) {
+        setActiveKind(parsed.kind)
+      }
+      const payload = await previewImportOnServer(parsed.kind, parsed.rows)
+      setSourceRows(parsed.rows)
+      setPdfInsight(parsed.insight)
       setPreview(payload)
       setBackendStatus('connected')
-      setSyncMessage('SQLite backend connected.')
+      setSyncMessage(
+        parsed.insight
+          ? `PDF columns mapped automatically with ${parsed.insight.confidence}% confidence.`
+          : 'File columns mapped and validated with SQLite.',
+      )
     } catch (error) {
       setBackendStatus('offline')
       setSyncMessage(error instanceof Error ? error.message : 'Import preview failed.')
@@ -578,9 +609,9 @@ export function ImportCenter({ currentRole, userName, onAuditEvent }: ImportCent
     <section className="import-center">
       <div className="import-header">
         <div>
-          <span className="eyebrow">Admin imports</span>
-          <h2>College admin import center</h2>
-          <p>Bulk upload validated CSV or XLSX rows for daily academic operations.</p>
+          <span className="eyebrow">Simple upload</span>
+          <h2>Upload college data</h2>
+          <p>Choose the list, add a PDF, CSV, or XLSX file, review the automatically mapped rows, and save only the correct records.</p>
           <div className={clsx('master-sync-chip', `is-${backendStatus}`)}>
             <span>{backendStatus === 'connected' ? 'SQLite backend' : backendStatus === 'checking' ? 'Import validation' : 'Needs attention'}</span>
             <strong>{syncMessage}</strong>
@@ -593,6 +624,13 @@ export function ImportCenter({ currentRole, userName, onAuditEvent }: ImportCent
         </div>
       </div>
 
+      <div className="import-section-heading">
+        <span>1</span>
+        <div>
+          <strong>What are you uploading?</strong>
+          <small>Select a list type. A PDF with clear headers can correct this choice automatically.</small>
+        </div>
+      </div>
       <div className="import-kind-grid" aria-label="Import type">
         {templates.map((template) => (
           <button
@@ -608,36 +646,74 @@ export function ImportCenter({ currentRole, userName, onAuditEvent }: ImportCent
         ))}
       </div>
 
-      <div className="import-controls">
-        <div className="import-template-panel">
-          <strong>{activeTemplate.label} template</strong>
-          <span>{activeTemplate.columns.join(' / ')}</span>
+      <div className="import-section-heading">
+        <span>2</span>
+        <div>
+          <strong>Add the file</strong>
+          <small>Text-based PDFs are read by position and converted into the selected list automatically.</small>
         </div>
-        <button type="button" className="secondary-action" onClick={() => handleTemplateDownload('csv')}>
-          <Download size={15} />
-          <span>CSV template</span>
-        </button>
-        <button type="button" className="secondary-action" onClick={() => handleTemplateDownload('xlsx')}>
-          <FileSpreadsheet size={15} />
-          <span>XLSX template</span>
-        </button>
+      </div>
+      <div
+        className={clsx('import-dropzone', isDragging && 'is-dragging')}
+        onDragEnter={(event) => {
+          event.preventDefault()
+          setIsDragging(true)
+        }}
+        onDragOver={(event) => event.preventDefault()}
+        onDragLeave={() => setIsDragging(false)}
+        onDrop={(event) => {
+          event.preventDefault()
+          setIsDragging(false)
+          void handleFileChange(event.dataTransfer.files?.[0])
+        }}
+      >
+        <span className="import-dropzone__icon"><UploadCloud size={24} /></span>
+        <div>
+          <strong>{filename || `Drop the ${activeTemplate.label.toLowerCase()} here`}</strong>
+          <span>PDF, CSV, or XLSX - up to 1,000 rows per import</span>
+        </div>
         <label className="primary-action import-upload">
-          <UploadCloud size={16} />
-          <span>{filename || 'Upload file'}</span>
+          <FileText size={16} />
+          <span>{filename ? 'Choose another file' : 'Choose file'}</span>
           <input
             ref={inputRef}
             type="file"
-            accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            accept=".pdf,.csv,.xlsx,application/pdf,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             onChange={(event) => void handleFileChange(event.target.files?.[0])}
           />
         </label>
-        <button type="button" className="icon-button" aria-label="Clear import preview" onClick={clearPreview}>
-          <RefreshCw size={17} />
-        </button>
+        {filename ? (
+          <button type="button" className="icon-button" aria-label="Clear import preview" onClick={clearPreview}>
+            <RefreshCw size={17} />
+          </button>
+        ) : null}
+      </div>
+      <div className="import-template-help">
+        <span>Need the correct column format?</span>
+        <button type="button" onClick={() => handleTemplateDownload('csv')}><Download size={14} />CSV template</button>
+        <button type="button" onClick={() => handleTemplateDownload('xlsx')}><FileSpreadsheet size={14} />XLSX template</button>
       </div>
 
       {preview ? (
         <>
+          {pdfInsight ? (
+            <div className="import-mapping-banner">
+              <span className="import-mapping-icon"><Sparkles size={20} /></span>
+              <div>
+                <strong>PDF mapped as {activeTemplate.label}</strong>
+                <p>{pdfInsight.detectedColumns.join(' / ')}</p>
+                {pdfInsight.warnings.map((warning) => <small key={warning}>{warning}</small>)}
+              </div>
+              <span className="import-confidence">{pdfInsight.confidence}% match</span>
+            </div>
+          ) : null}
+          <div className="import-section-heading import-section-heading--review">
+            <span>3</span>
+            <div>
+              <strong>Review before saving</strong>
+              <small>Correct rows are ready. Uncertain or incomplete rows stay separate and are never saved automatically.</small>
+            </div>
+          </div>
           <div className="import-kpis">
             <article>
               <UploadCloud size={18} />
@@ -673,63 +749,50 @@ export function ImportCenter({ currentRole, userName, onAuditEvent }: ImportCent
                 aria-label="Search import preview"
               />
             </label>
+            <div className="segmented-control import-preview-tabs" aria-label="Preview status">
+              <button type="button" className={clsx(previewTab === 'accepted' && 'is-active')} onClick={() => setPreviewTab('accepted')}>
+                Ready ({preview.summary.valid})
+              </button>
+              <button type="button" className={clsx(previewTab === 'rejected' && 'is-active')} onClick={() => setPreviewTab('rejected')}>
+                Needs correction ({preview.summary.invalid})
+              </button>
+            </div>
             <button
               type="button"
               className="primary-action"
               disabled={preview.summary.valid === 0 || isCommitting}
               onClick={commitValidRows}
             >
-              <Database size={16} />
-              <span>{isCommitting ? 'Saving rows' : 'Import valid rows'}</span>
+              <FileCheck2 size={16} />
+              <span>{isCommitting ? 'Saving rows' : `Save ${preview.summary.valid} correct rows`}</span>
             </button>
-            <button
-              type="button"
-              className="secondary-action"
-              disabled={preview.summary.invalid === 0}
-              onClick={() => handleRejectedExport('csv')}
-            >
-              <Download size={15} />
-              <span>Rejected CSV</span>
-            </button>
-            <button
-              type="button"
-              className="secondary-action"
-              disabled={preview.summary.invalid === 0}
-              onClick={() => handleRejectedExport('xlsx')}
-            >
-              <FileSpreadsheet size={15} />
-              <span>Rejected XLSX</span>
-            </button>
+            {previewTab === 'rejected' ? (
+              <button type="button" className="secondary-action" disabled={preview.summary.invalid === 0} onClick={() => handleRejectedExport('xlsx')}>
+                <Download size={15} />
+                <span>Download correction file</span>
+              </button>
+            ) : null}
           </div>
 
-          <div className="import-preview-grid">
-            <section className="panel import-panel">
-              <div className="panel-heading">
-                <div>
-                  <span className="panel-kicker">Preview</span>
-                  <h2>Accepted rows</h2>
-                </div>
-                <CheckCircle2 size={20} />
+          <section className="panel import-panel import-panel--single">
+            <div className="panel-heading">
+              <div>
+                <span className="panel-kicker">{previewTab === 'accepted' ? 'Ready to save' : 'Review required'}</span>
+                <h2>{previewTab === 'accepted' ? 'Correctly mapped rows' : 'Rows needing correction'}</h2>
               </div>
-              <ImportRowsTable rows={visibleValidRows} kind="accepted" emptyMessage="No accepted rows match this search." />
-            </section>
-
-            <section className="panel import-panel">
-              <div className="panel-heading">
-                <div>
-                  <span className="panel-kicker">Validation</span>
-                  <h2>Rejected rows</h2>
-                </div>
-                <XCircle size={20} />
-              </div>
-              <ImportRowsTable rows={visibleInvalidRows} kind="rejected" emptyMessage="No rejected rows for this preview." />
-            </section>
-          </div>
+              {previewTab === 'accepted' ? <CheckCircle2 size={20} /> : <XCircle size={20} />}
+            </div>
+            <ImportRowsTable
+              rows={previewTab === 'accepted' ? visibleValidRows : visibleInvalidRows}
+              kind={previewTab}
+              emptyMessage={previewTab === 'accepted' ? 'No correct rows match this search.' : 'No rows need correction.'}
+            />
+          </section>
         </>
       ) : (
         <div className="empty-state empty-state--boxed import-empty">
           {isLoading ? <RefreshCw size={20} /> : <UploadCloud size={20} />}
-          <span>{isLoading ? 'Reading file and preparing preview.' : 'Upload a CSV or XLSX file to preview rows before saving.'}</span>
+          <span>{isLoading ? 'Reading the file, mapping columns, and checking every row.' : 'Your mapped preview will appear here. Nothing is saved until you approve the correct rows.'}</span>
         </div>
       )}
     </section>

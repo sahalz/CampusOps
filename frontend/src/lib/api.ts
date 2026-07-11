@@ -12,6 +12,8 @@ import type {
   ImportKind,
   ImportPreviewPayload,
   ImportSourceRow,
+  InstitutionProfile,
+  InstitutionState,
   KnowledgeSearchPayload,
   KnowledgeState,
   LeaveRequest,
@@ -192,6 +194,17 @@ export async function logoutOnServer() {
     // Ignore storage cleanup failure.
   }
   return response
+}
+
+export function fetchInstitutionState() {
+  return requestJson<InstitutionState>('/institution')
+}
+
+export function updateInstitutionProfileOnServer(profile: InstitutionProfile) {
+  return requestJson<InstitutionState>('/institution', {
+    method: 'PUT',
+    body: JSON.stringify(profile),
+  })
 }
 
 export function fetchMasterDataState() {

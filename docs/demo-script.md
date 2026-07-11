@@ -29,7 +29,8 @@ Dr. Priya Menon / Academic Admin
 Show:
 
 - Login identity chip: `SQLite identity`
-- Action Center as the first admin workspace
+- Campus Home as the first admin workspace
+- College identity, academic context, role-aware metrics, and rollout readiness
 - Academic sync chip: `SQLite backend`
 - Academic operations dashboard
 - Timetable mapping
@@ -39,7 +40,18 @@ Show:
 - Imports section
 - Reports section
 
-## 3. Action Center Demo
+## 3. Campus Home and College Setup
+
+On Home:
+
+1. Show open actions, critical work, active students, and rollout readiness.
+2. Use a quick link to open Action Center, then return Home.
+3. Open College Setup from the rollout checklist.
+4. Show institution identity, current term, timezone, email domain, and attendance shortage threshold.
+5. Explain that the threshold drives shortage reports and Action Center escalation.
+6. Show the data-backed adoption checklist for departments, subjects, people, timetable, policy knowledge, and circulars.
+
+## 4. Action Center Demo
 
 In Action Center:
 
@@ -49,7 +61,7 @@ In Action Center:
 4. Open an action to jump into the related module.
 5. Mark an action reviewed and show that the audit trail records the action.
 
-## 4. Master Data Demo
+## 5. Master Data Demo
 
 In Master Data:
 
@@ -60,7 +72,7 @@ In Master Data:
 5. Try a duplicate subject code to show validation.
 6. Show that audit events are recorded.
 
-## 5. Knowledge RAG Demo
+## 6. Knowledge RAG Demo
 
 In Knowledge:
 
@@ -71,7 +83,7 @@ In Knowledge:
 5. As Admin, paste or load a plain text policy document and save it.
 6. Search a tag such as `circular` or `placement` to show source-backed retrieval.
 
-## 6. Circular Intelligence Demo
+## 7. Circular Intelligence Demo
 
 In Circulars:
 
@@ -81,18 +93,19 @@ In Circulars:
 4. Mark a notice read and show unread counts update.
 5. Publish a new circular as Admin and search for a term from the message.
 
-## 7. Import Center Demo
+## 8. Import Center Demo
 
-In Imports:
+In Upload Data:
 
-1. Show the sync chip for SQLite import validation.
-2. Choose `Students`, then download the blank CSV and XLSX templates.
-3. Upload a CSV or XLSX file and show preview KPIs for accepted, rejected, creates, and updates.
-4. Search preview rows to find a roll number, department, or validation issue.
-5. Export rejected rows as CSV or XLSX for office correction.
-6. Import valid rows and show that the backend records an audit event.
+1. Choose `Student list` or `Timetable`.
+2. Add a text-based PDF, CSV, or XLSX file.
+3. For PDF, show automatic list-type recognition, detected columns, and mapping confidence.
+4. Show that correct rows and rows needing correction are kept in separate tabs.
+5. Search preview rows to find a roll number, department, or validation issue.
+6. Download the correction workbook when a row is incomplete or uncertain.
+7. Save only the correct rows and show that the backend records an audit event.
 
-## 8. Reports Demo
+## 9. Reports Demo
 
 In Reports:
 
@@ -104,7 +117,7 @@ In Reports:
 6. Export one report as CSV, PDF, and XLSX and show that audit events are recorded.
 7. Use Print to show the office-friendly print layout.
 
-## 9. Academic Workflow Demo
+## 10. Academic Workflow Demo
 
 1. Map a timetable period.
 2. Select a timetable slot.
@@ -112,7 +125,7 @@ In Reports:
 4. Submit a period-wise leave request.
 5. Approve or reject the leave.
 
-## 10. Faculty Login
+## 11. Faculty Login
 
 Logout and choose:
 
@@ -123,6 +136,7 @@ Prof. Anjali Rao / Faculty
 Show:
 
 - Faculty-only academic workspace
+- Faculty Home with personal action, timetable, attendance-gap, and leave metrics
 - My Actions view with assigned leave, workload, and attendance marking gaps
 - Assigned periods
 - Leave approval queue
@@ -131,7 +145,7 @@ Show:
 - Read-only Master Data view for department and assigned subjects
 - Limited My Reports view for assigned leave and workload backed by backend RBAC
 
-## 11. Student Login
+## 12. Student Login
 
 Logout and choose:
 
@@ -142,6 +156,7 @@ Aisha Khan / Student
 Show:
 
 - Student timetable
+- Student Home with personal attendance, mapped periods, pending leave, and unread notices
 - Attendance health
 - Period-wise leave application
 - Circular intelligence limited to student-visible notices
@@ -152,4 +167,4 @@ Show:
 
 Use this explanation:
 
-> CampusOps AI is a full-stack local prototype. The frontend delivers role-specific college operations workflows, while the backend provides SQLite persistence for users, sessions, academics, imports, knowledge documents, master data, staff, circulars, action-center events, reports, and audit logs. It works without paid services and can be upgraded to a campus-wide deployment with password or SSO authentication and PostgreSQL.
+> CampusOps AI is a college-adaptable, local-first operations prototype. It starts with a configurable institution profile and rollout checklist, gives each role a useful operating home, and connects daily academics, imports, policy knowledge, communication, reports, and audit trails through SQLite. A campus-wide deployment would add password or SSO authentication, narrower academic mutation APIs, PostgreSQL, backups, and operational monitoring.

@@ -58,6 +58,7 @@ const emptyReports: ReportsPayload = {
   version: 1,
   source: 'sqlite',
   generatedAt: '',
+  attendanceThreshold: 75,
   filters: {
     department: 'all',
     semester: 'all',
@@ -525,7 +526,7 @@ export function ReportsCenter({ currentRole, actorId, userName, onAuditEvent }: 
     {
       label: 'Attendance shortage',
       value: reports.kpis.attendanceShortage,
-      detail: 'students below 75%',
+      detail: `students below ${reports.attendanceThreshold}%`,
       icon: AlertTriangle,
       tone: 'amber',
     },
@@ -644,7 +645,7 @@ export function ReportsCenter({ currentRole, actorId, userName, onAuditEvent }: 
         {isAdmin ? (
           <ReportTable<AttendanceShortageReportRow>
             title="Attendance shortage"
-            kicker={`${visibleAttendance.length} students below 75%`}
+            kicker={`${visibleAttendance.length} students below ${reports.attendanceThreshold}%`}
             icon={AlertTriangle}
             rows={visibleAttendance}
             emptyMessage="No students match the shortage filters."

@@ -130,6 +130,60 @@ export type AuthSession = {
   user: UserAccount
 }
 
+export type InstitutionProfile = {
+  name: string
+  shortName: string
+  code: string
+  academicYear: string
+  currentTerm: string
+  timezone: string
+  attendanceThreshold: number
+  emailDomain: string
+  website: string
+  updatedAt: string
+}
+
+export type InstitutionReadinessStep = {
+  id: string
+  label: string
+  detail: string
+  complete: boolean
+  targetSection: string
+}
+
+export type InstitutionState = {
+  version: 1
+  source: 'sqlite' | 'demo'
+  profile: InstitutionProfile
+  readiness: {
+    score: number
+    completed: number
+    total: number
+    steps: InstitutionReadinessStep[]
+  }
+  stats: {
+    departments: number
+    subjects: number
+    students: number
+    staff: number
+    classSections: number
+    timetableSlots: number
+    attendanceRecords: number
+    pendingLeaves: number
+    circulars: number
+    knowledgeDocuments: number
+  }
+  dashboard: {
+    attendancePercent: number | null
+    scheduledPeriods: number
+    pendingLeaves: number
+    unreadCirculars: number
+    openActions: number
+    criticalActions: number
+    attendanceGaps: number
+  }
+}
+
 export type RequestCase = {
   id: string
   title: string
@@ -551,6 +605,7 @@ export type ReportsPayload = {
   version: 1
   source: 'sqlite'
   generatedAt: string
+  attendanceThreshold: number
   filters: ReportFilters
   filterOptions: {
     departments: string[]

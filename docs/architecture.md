@@ -16,9 +16,12 @@ flowchart LR
 - Vite + React + TypeScript
 - Role-aware UI for Admin, Faculty, and Student
 - Backend-backed login cards with demo-safe offline fallback
+- Role-aware Campus Home backed by institution, readiness, and personal operations metrics
+- College Setup workspace for administrator-managed institution identity and operating context
 - Lazy-loaded heavier modules so students do not download admin-only screens
 - Backend-backed Action Center is lazy-loaded for admin/faculty daily triage
-- Admin-only Import Center is lazy-loaded separately from reports and student workflows
+- Admin-only Upload Data workspace is lazy-loaded separately from reports and student workflows
+- PDF.js positional text extraction converts text-based PDF tables into canonical student, staff, subject, or timetable rows before backend validation
 - Backend-backed Knowledge Center is lazy-loaded and provides source-cited policy search
 - Responsive dashboard layout for presentation and daily operations
 - Browser backup mode for demo safety
@@ -43,13 +46,14 @@ flowchart LR
 - Circulars and circular read receipts
 - Circular intelligence searches visible notices, unread status, urgent items, and deadlines
 - Knowledge documents and searchable policy chunks
-- Validated admin imports for students, staff profiles, subjects, and timetable slots
+- Validated PDF/CSV/XLSX admin imports for students, staff profiles, subjects, and timetable slots
 - Action Center items generated from live attendance, leave, workload, circular, timetable, and master-data signals
 - Administrative reports generated from SQLite-backed operational data
 - Action Center open/review actions
 - Import commit actions and rejected-row export actions
 - Report export actions for CSV, PDF, and XLSX downloads
 - Audit events
+- Institution profile, current academic context, and configurable attendance shortage threshold
 
 ## Backend RBAC
 
@@ -76,5 +80,7 @@ For a college adoption pilot:
 3. Expand endpoint permission checks to every academic write workflow.
 4. Replace SQLite with PostgreSQL if multi-user deployment is needed.
 5. Add backups, logs, and deployment monitoring.
+
+The current College Setup and readiness model gives a pilot team a visible path through those foundations, but it does not replace production identity, infrastructure, or data-governance work.
 
 The current structure already separates UI, API, data persistence, and documentation, so this upgrade path is straightforward.

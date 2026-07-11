@@ -22,6 +22,7 @@ import {
   getDatabaseInfo,
   getDepartments,
   getKnowledgeState,
+  getInstitutionState,
   getMasterData,
   getReportByName,
   getReports,
@@ -37,6 +38,7 @@ import {
   searchCircularIntelligence,
   searchKnowledgeBase,
   updateDepartment,
+  updateInstitutionProfile,
   updateStaffProfile,
   updateSubject,
 } from './db.js'
@@ -199,6 +201,43 @@ async function handleAuth(request, response, pathname) {
   }
 
   notFound(response)
+}
+
+async function handleInstitution(request, response, pathname) {
+  if (pathname !== '/api/institution') {
+    notFound(response)
+    return
+  }
+
+  if (request.method === 'GET') {
+    const session = requireRoles(request, response, ['admin', 'faculty', 'student'])
+    if (!session) {
+      return
+    }
+
+    sendJson(response, 200, getInstitutionState(session.user))
+    return
+  }
+
+  if (request.method === 'PUT') {
+    const session = requireRoles(request, response, ['admin'])
+    if (!session) {
+      return
+    }
+
+    try {
+      sendJson(response, 200, updateInstitutionProfile(await readJson(request), session.user.name))
+    } catch (error) {
+      if (Array.isArray(error?.validationErrors)) {
+        validationError(response, error.validationErrors)
+        return
+      }
+      throw error
+    }
+    return
+  }
+
+  methodNotAllowed(response)
 }
 
 async function handleMasterData(request, response, pathname) {
@@ -813,6 +852,11 @@ const server = createServer(async (request, response) => {
 
     if (pathname.startsWith('/api/auth')) {
       await handleAuth(request, response, pathname)
+      return
+    }
+
+    if (pathname.startsWith('/api/institution')) {
+      await handleInstitution(request, response, pathname)
       return
     }
 

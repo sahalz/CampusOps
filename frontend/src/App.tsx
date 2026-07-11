@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useMemo, useState } from 'react'
+import { Fragment, Suspense, lazy, useEffect, useMemo, useState } from 'react'
 import {
   Activity,
   BellRing,
@@ -13,6 +13,7 @@ import {
   GitBranch,
   IdCard,
   Inbox,
+  House,
   LayoutDashboard,
   LockKeyhole,
   LogOut,
@@ -23,6 +24,7 @@ import {
   SearchCheck,
   ShieldCheck,
   Sparkles,
+  Settings2,
   UploadCloud,
   UserCheck,
   UserRound,
@@ -32,6 +34,8 @@ import clsx from 'clsx'
 import './App.css'
 import { AcademicOperations } from './components/AcademicOperations'
 import { CircularsCenter } from './components/circulars/CircularsCenter'
+import { CampusHome } from './components/home/CampusHome'
+import { InstitutionSetup } from './components/settings/InstitutionSetup'
 import {
   approvalItems as seededApprovals,
   auditEvents as seededAuditEvents,
@@ -48,11 +52,13 @@ import {
   fetchAuditEvents,
   fetchAuthUsers,
   fetchCurrentAuthSession,
+  fetchInstitutionState,
   loginOnServer,
   logoutOnServer,
   persistAuditEvent,
 } from './lib/api'
-import type { ApprovalItem, ApprovalStatus, AuditEvent, RiskLevel, Role, RouteResult, UserAccount } from './types'
+import { demoInstitutionState } from './data/institution'
+import type { ApprovalItem, ApprovalStatus, AuditEvent, InstitutionState, RiskLevel, Role, RouteResult, UserAccount } from './types'
 
 const WorkflowCanvas = lazy(() =>
   import('./components/WorkflowCanvas').then((module) => ({ default: module.WorkflowCanvas })),
@@ -121,9 +127,14 @@ const samplePrompts = [
 ]
 
 const sectionDescriptions: Record<string, { eyebrow: string; title: string; copy: string }> = {
+  home: {
+    eyebrow: 'Campus command',
+    title: 'Home',
+    copy: 'A role-aware overview of today’s work, operational health, and the next best action.',
+  },
   'action-center': {
     eyebrow: 'Daily action',
-    title: 'Action Center',
+    title: 'Tasks',
     copy: 'Prioritized admin and faculty work from attendance, leave, circulars, workload, timetable mapping, and master data.',
   },
   academics: {
@@ -138,8 +149,8 @@ const sectionDescriptions: Record<string, { eyebrow: string; title: string; copy
   },
   imports: {
     eyebrow: 'Bulk entry',
-    title: 'Imports',
-    copy: 'Upload student lists, staff profiles, subjects, and timetable sheets with preview validation before saving.',
+    title: 'Upload Data',
+    copy: 'Add student lists, staff records, subjects, and timetables from PDF, CSV, or XLSX with automatic mapping and validation.',
   },
   reports: {
     eyebrow: 'Office reports',
@@ -148,7 +159,7 @@ const sectionDescriptions: Record<string, { eyebrow: string; title: string; copy
   },
   circulars: {
     eyebrow: 'Communication',
-    title: 'Circulars',
+    title: 'Notices',
     copy: 'Publish notices, target the right audience, and track read receipts without leaving the admin console.',
   },
   staff: {
@@ -186,6 +197,11 @@ const sectionDescriptions: Record<string, { eyebrow: string; title: string; copy
     title: 'Request Router',
     copy: 'Use the agent workflow tools only when you need routing, workflow simulation, or automation review.',
   },
+  'college-setup': {
+    eyebrow: 'Adoption',
+    title: 'College Settings',
+    copy: 'Configure your institution identity, academic context, operating policy, and rollout foundations.',
+  },
 }
 
 function riskLabel(risk: RiskLevel) {
@@ -219,7 +235,10 @@ function App() {
   const [routeResult, setRouteResult] = useState<RouteResult | null>(null)
   const [approvals, setApprovals] = useState<ApprovalItem[]>(seededApprovals)
   const [auditEvents, setAuditEvents] = useState<AuditEvent[]>(seededAuditEvents)
-  const [activeNavId, setActiveNavId] = useState('action-center')
+  const [activeNavId, setActiveNavId] = useState('home')
+  const [institutionState, setInstitutionState] = useState<InstitutionState>(demoInstitutionState)
+  const [institutionStatus, setInstitutionStatus] = useState<'loading' | 'connected' | 'offline'>('loading')
+  const [showMoreTools, setShowMoreTools] = useState(false)
   const session = sessionUser ?? accounts.find((account) => account.id === sessionId) ?? null
   const activeRole = session?.role ?? 'admin'
 
@@ -244,97 +263,163 @@ function App() {
   const pendingApprovals = approvals.filter((approval) => approval.status === 'pending')
   const showAdvancedAutomation = activeRole === 'admin'
   const showApprovalPanel = activeRole !== 'student'
-  const navItems = useMemo(
+  const allNavItems = useMemo(
     () =>
       [
         {
+          id: 'home',
+          label: 'Home',
+          icon: House,
+          group: 'Workspace',
+          roles: ['admin', 'faculty', 'student'] as Role[],
+        },
+        {
           id: 'action-center',
-          label: activeRole === 'admin' ? 'Action Center' : 'My Actions',
+          label: activeRole === 'admin' ? 'Tasks' : 'My Tasks',
           icon: Inbox,
+          group: 'Operate',
           roles: ['admin', 'faculty'] as Role[],
         },
         {
           id: 'academics',
           label: 'Academics',
           icon: LayoutDashboard,
+          group: 'Operate',
           roles: ['admin', 'faculty', 'student'] as Role[],
         },
         {
           id: 'master-data',
-          label: 'Master Data',
+          label: 'Data Setup',
           icon: School,
+          group: 'Data',
           roles: ['admin', 'faculty'] as Role[],
         },
         {
           id: 'imports',
-          label: 'Imports',
+          label: 'Upload Data',
           icon: UploadCloud,
+          group: 'Data',
           roles: ['admin'] as Role[],
         },
         {
           id: 'reports',
           label: activeRole === 'admin' ? 'Reports' : 'My Reports',
           icon: FileSpreadsheet,
+          group: 'Data',
           roles: ['admin', 'faculty'] as Role[],
         },
         {
           id: 'circulars',
-          label: 'Circulars',
+          label: 'Notices',
           icon: BellRing,
+          group: 'Operate',
           roles: ['admin', 'faculty', 'student'] as Role[],
         },
         {
           id: 'staff',
           label: 'Staff',
           icon: IdCard,
+          group: 'Data',
           roles: ['admin', 'faculty'] as Role[],
         },
         {
           id: 'approvals',
           label: 'Approvals',
           icon: ClipboardCheck,
+          group: 'Operate',
           roles: ['admin', 'faculty'] as Role[],
         },
         {
           id: 'knowledge',
           label: 'Knowledge',
           icon: Database,
+          group: 'Intelligence',
           roles: ['admin', 'faculty', 'student'] as Role[],
         },
         {
           id: 'audit',
           label: 'Audit Trail',
           icon: MessageSquareText,
+          group: 'Governance',
           roles: ['admin', 'faculty'] as Role[],
         },
         {
           id: 'automation',
           label: 'AI Router',
           icon: Bot,
+          group: 'Intelligence',
           roles: ['admin'] as Role[],
         },
         {
           id: 'security',
           label: 'Security',
           icon: LockKeyhole,
+          group: 'Governance',
           roles: ['admin'] as Role[],
         },
         {
           id: 'evaluation',
           label: 'Evaluation',
           icon: Gauge,
+          group: 'Governance',
           roles: ['admin'] as Role[],
         },
-      ].filter((item) => item.roles.includes(activeRole)),
+        {
+          id: 'college-setup',
+          label: 'College Settings',
+          icon: Settings2,
+          group: 'Governance',
+          roles: ['admin'] as Role[],
+        },
+      ]
+        .filter((item) => item.roles.includes(activeRole))
+        .sort(
+          (first, second) =>
+            ['Workspace', 'Operate', 'Data', 'Intelligence', 'Governance'].indexOf(first.group) -
+            ['Workspace', 'Operate', 'Data', 'Intelligence', 'Governance'].indexOf(second.group),
+        ),
     [activeRole],
   )
+  const navItems = useMemo(() => {
+    if (activeRole !== 'admin' || showMoreTools) {
+      return allNavItems
+    }
+
+    const everydayAdminSections = new Set([
+      'home',
+      'action-center',
+      'academics',
+      'circulars',
+      'imports',
+      'reports',
+      'staff',
+      'college-setup',
+    ])
+    return allNavItems.filter((item) => everydayAdminSections.has(item.id) || item.id === activeNavId)
+  }, [activeNavId, activeRole, allNavItems, showMoreTools])
   const sectionMeta = sectionDescriptions[activeNavId] ?? sectionDescriptions.academics
 
+  const refreshInstitution = () => {
+    setInstitutionStatus('loading')
+    fetchInstitutionState()
+      .then((state) => {
+        setInstitutionState(state)
+        setInstitutionStatus('connected')
+      })
+      .catch(() => {
+        setInstitutionStatus('offline')
+      })
+  }
+
   useEffect(() => {
-    if (!navItems.some((item) => item.id === activeNavId)) {
-      setActiveNavId(navItems[0]?.id ?? 'academics')
+    if (!allNavItems.some((item) => item.id === activeNavId)) {
+      setActiveNavId(allNavItems[0]?.id ?? 'academics')
     }
-  }, [activeNavId, navItems])
+  }, [activeNavId, allNavItems])
+
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: 'auto' })
+  }, [activeNavId])
 
   useEffect(() => {
     let mounted = true
@@ -389,6 +474,12 @@ function App() {
       mounted = false
     }
   }, [])
+
+  useEffect(() => {
+    if (session?.id) {
+      refreshInstitution()
+    }
+  }, [session?.id])
 
   useEffect(() => {
     let mounted = true
@@ -462,6 +553,8 @@ function App() {
     const openLocalSession = () => {
       setSessionId(account.id)
       setSessionUser(account)
+      setActiveNavId('home')
+      setShowMoreTools(false)
       try {
         window.localStorage.setItem(authStorageKey, account.id)
       } catch {
@@ -479,6 +572,8 @@ function App() {
       .then((authSession) => {
         setSessionUser(authSession.user)
         setSessionId(authSession.user.id)
+        setActiveNavId('home')
+        setShowMoreTools(false)
         try {
           window.localStorage.setItem(authStorageKey, authSession.user.id)
         } catch {
@@ -500,6 +595,8 @@ function App() {
     })
     setSessionId(null)
     setSessionUser(null)
+    setActiveNavId('home')
+    setShowMoreTools(false)
     try {
       window.localStorage.removeItem(authStorageKey)
       window.localStorage.removeItem(authSessionStorageKey)
@@ -553,26 +650,43 @@ function App() {
             <Sparkles size={20} />
           </div>
           <div>
-            <strong>CampusOps AI</strong>
-            <span>College admin console</span>
+            <strong>{institutionState.profile.shortName}</strong>
+            <span>Powered by CampusOps AI</span>
           </div>
         </div>
 
         <nav className="main-nav" aria-label="Primary">
-          {navItems.map((item) => {
+          {navItems.map((item, index) => {
             const Icon = item.icon
             return (
-              <button
-                key={item.id}
-                type="button"
-                className={clsx('nav-item', activeNavId === item.id && 'is-active')}
-                onClick={() => setActiveNavId(item.id)}
-              >
-                <Icon size={17} />
-                <span>{item.label}</span>
-              </button>
+              <Fragment key={item.id}>
+                {index === 0 || navItems[index - 1].group !== item.group ? (
+                  <span className="nav-group-label">{item.group}</span>
+                ) : null}
+                <button
+                  type="button"
+                  aria-label={item.label}
+                  className={clsx('nav-item', activeNavId === item.id && 'is-active')}
+                  onClick={() => setActiveNavId(item.id)}
+                >
+                  <Icon size={17} />
+                  <span>{item.label}</span>
+                </button>
+              </Fragment>
             )
           })}
+          {activeRole === 'admin' ? (
+            <button
+              type="button"
+              className={clsx('nav-more-button', showMoreTools && 'is-open')}
+              aria-expanded={showMoreTools}
+              onClick={() => setShowMoreTools((current) => !current)}
+            >
+              <Settings2 size={16} />
+              <span>{showMoreTools ? 'Hide extra tools' : 'More admin tools'}</span>
+              <ChevronRight size={15} />
+            </button>
+          ) : null}
         </nav>
       </aside>
 
@@ -599,6 +713,19 @@ function App() {
             </button>
           </div>
         </header>
+
+        {activeNavId === 'home' ? (
+          <div id="section-home" className="section-anchor active-section">
+            <CampusHome
+              currentRole={session.role}
+              userName={session.name}
+              state={institutionState}
+              status={institutionStatus}
+              onNavigate={setActiveNavId}
+              onRefresh={refreshInstitution}
+            />
+          </div>
+        ) : null}
 
         {activeNavId === 'academics' ? (
         <div id="section-academics" className="section-anchor active-section">
@@ -1002,6 +1129,19 @@ function App() {
             </div>
           </section>
         </div>
+        ) : null}
+
+        {activeNavId === 'college-setup' && activeRole === 'admin' ? (
+          <div id="section-college-setup" className="section-anchor active-section">
+            <InstitutionSetup
+              state={institutionState}
+              onNavigate={setActiveNavId}
+              onUpdated={(state) => {
+                setInstitutionState(state)
+                setInstitutionStatus('connected')
+              }}
+            />
+          </div>
         ) : null}
       </main>
     </div>
