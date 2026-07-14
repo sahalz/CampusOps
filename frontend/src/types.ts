@@ -53,19 +53,28 @@ export type KnowledgeDocument = {
   owner: string
   tags: string[]
   status: 'active' | 'archived'
+  audience: 'everyone' | 'students' | 'faculty' | 'admin'
+  versionLabel: string
+  effectiveAt: string
+  expiresAt: string
+  pageCount: number
+  format: 'text' | 'pdf'
+  lifecycle: 'current' | 'scheduled' | 'expired' | 'archived'
   chunkCount: number
   createdAt: string
   updatedAt: string
 }
 
 export type KnowledgeState = {
-  version: 1
+  version: 2
   source: 'sqlite'
   documents: KnowledgeDocument[]
   stats: {
     documents: number
     activeDocuments: number
     chunks: number
+    restrictedDocuments: number
+    pdfDocuments: number
   }
 }
 
@@ -81,14 +90,48 @@ export type KnowledgeCitation = {
   snippet: string
   tags: string[]
   score: number
+  audience: 'everyone' | 'students' | 'faculty' | 'admin'
+  versionLabel: string
+  effectiveAt: string
+  expiresAt: string
+  format: 'text' | 'pdf'
+  matchReasons: string[]
 }
 
 export type KnowledgeSearchPayload = {
-  version: 1
+  version: 2
   query: string
   answer: string
   citations: KnowledgeCitation[]
   confidence: number
+  grounded: boolean
+  retrievalMode: 'sqlite-fts5+concepts'
+  warnings: string[]
+}
+
+export type KnowledgeEvaluationCase = {
+  id: string
+  question: string
+  expectedDocumentId: string
+  expectedTerm: string
+  citationCorrect: boolean
+  answerSupported: boolean
+  passed: boolean
+  confidence: number
+  retrievedDocument: string
+}
+
+export type KnowledgeEvaluationPayload = {
+  version: 1
+  generatedAt: string
+  retrievalMode: 'sqlite-fts5+concepts'
+  total: number
+  passed: number
+  accuracy: number
+  citationAccuracy: number
+  answerSupport: number
+  durationMs: number
+  cases: KnowledgeEvaluationCase[]
 }
 
 export type ApprovalStatus = 'pending' | 'approved' | 'blocked'
@@ -601,6 +644,92 @@ export type ActionCenterPayload = {
   items: ActionCenterItem[]
 }
 
+export type AutomationRunStatus =
+  | 'completed'
+  | 'awaiting_approval'
+  | 'rejected'
+  | 'no_match'
+  | 'failed'
+
+export type AutomationRun = {
+  id: string
+  ruleId: string
+  ruleName: string
+  category: string
+  status: AutomationRunStatus
+  matchCount: number
+  notificationCount: number
+  attempt: number
+  summary: string
+  errorMessage: string
+  startedBy: string
+  decidedBy: string
+  decidedAt: string
+  startedAt: string
+  completedAt: string
+  deduplicated?: boolean
+}
+
+export type AutomationRule = {
+  id: string
+  name: string
+  description: string
+  category: string
+  triggerType:
+    | 'attendance_gap'
+    | 'pending_leave'
+    | 'attendance_shortage'
+    | 'circular_unread'
+    | 'policy_expiry'
+  condition: {
+    minimumSeverity?: 'info' | 'warning' | 'critical'
+    daysBefore?: number
+  }
+  action: {
+    type: 'in_app_notification'
+    target: 'signal_owner'
+  }
+  approvalRequired: boolean
+  enabled: boolean
+  cooldownMinutes: number
+  createdBy: string
+  createdAt: string
+  updatedAt: string
+  lastRun: AutomationRun | null
+}
+
+export type AutomationNotification = {
+  id: string
+  runId: string
+  ruleName: string
+  recipient: string
+  channel: 'in_app'
+  subject: string
+  message: string
+  status: 'sent' | 'read' | 'failed'
+  createdAt: string
+  sentAt: string
+  readAt: string
+}
+
+export type AutomationState = {
+  version: 1
+  source: 'sqlite'
+  generatedAt: string
+  summary: {
+    rules: number
+    enabledRules: number
+    runsToday: number
+    completedRuns: number
+    awaitingApproval: number
+    failedRuns: number
+    unreadNotifications: number
+  }
+  rules: AutomationRule[]
+  runs: AutomationRun[]
+  notifications: AutomationNotification[]
+}
+
 export type ReportsPayload = {
   version: 1
   source: 'sqlite'
@@ -641,6 +770,7 @@ export type ImportPreviewRow = {
   rowNumber: number
   data: ImportSourceRow
   errors: string[]
+  conflicts: string[]
   action: 'create' | 'update'
   normalized: ImportSourceRow
 }
@@ -656,6 +786,7 @@ export type ImportPreviewPayload = {
     invalid: number
     creates: number
     updates: number
+    conflicts: number
   }
 }
 

@@ -1,7 +1,7 @@
 import { mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { DatabaseSync } from 'node:sqlite'
 import { masterDataStatuses, normalizeValue, slugify, subjectKinds } from './validation.js'
 
@@ -359,6 +359,64 @@ No payment should be marked payable unless the claim is approved and the audit t
   },
 ]
 
+const seedAutomationRules = [
+  {
+    id: 'auto-attendance-reminder',
+    name: 'Missing attendance reminder',
+    description: 'Notify the assigned faculty when a mapped register still has unmarked students.',
+    category: 'Attendance',
+    triggerType: 'attendance_gap',
+    condition: { minimumSeverity: 'warning' },
+    action: { type: 'in_app_notification', target: 'signal_owner' },
+    approvalRequired: false,
+    cooldownMinutes: 720,
+  },
+  {
+    id: 'auto-leave-escalation',
+    name: 'Pending leave escalation',
+    description: 'Prepare an escalation when a period-wise leave request remains pending.',
+    category: 'Leave',
+    triggerType: 'pending_leave',
+    condition: { minimumSeverity: 'warning' },
+    action: { type: 'in_app_notification', target: 'signal_owner' },
+    approvalRequired: true,
+    cooldownMinutes: 1440,
+  },
+  {
+    id: 'auto-shortage-follow-up',
+    name: 'Attendance shortage follow-up',
+    description: 'Notify the responsible class team when a student falls below the college threshold.',
+    category: 'Attendance',
+    triggerType: 'attendance_shortage',
+    condition: { minimumSeverity: 'warning' },
+    action: { type: 'in_app_notification', target: 'signal_owner' },
+    approvalRequired: false,
+    cooldownMinutes: 1440,
+  },
+  {
+    id: 'auto-circular-reminder',
+    name: 'Unread circular reminder',
+    description: 'Notify the target owner when an active circular still has unread recipients.',
+    category: 'Circulars',
+    triggerType: 'circular_unread',
+    condition: { minimumSeverity: 'warning' },
+    action: { type: 'in_app_notification', target: 'signal_owner' },
+    approvalRequired: false,
+    cooldownMinutes: 360,
+  },
+  {
+    id: 'auto-policy-expiry',
+    name: 'Policy expiry warning',
+    description: 'Warn a policy owner before an approved knowledge source expires.',
+    category: 'Knowledge',
+    triggerType: 'policy_expiry',
+    condition: { daysBefore: 30 },
+    action: { type: 'in_app_notification', target: 'signal_owner' },
+    approvalRequired: false,
+    cooldownMinutes: 1440,
+  },
+]
+
 db.exec(`
   PRAGMA foreign_keys = ON;
   PRAGMA journal_mode = WAL;
@@ -527,6 +585,12 @@ db.exec(`
     owner TEXT NOT NULL,
     tags TEXT NOT NULL,
     status TEXT NOT NULL CHECK (status IN ('active', 'archived')),
+    audience TEXT NOT NULL DEFAULT 'everyone',
+    version_label TEXT NOT NULL DEFAULT '1.0',
+    effective_at TEXT,
+    expires_at TEXT,
+    page_count INTEGER NOT NULL DEFAULT 1,
+    format TEXT NOT NULL DEFAULT 'text',
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
@@ -543,6 +607,68 @@ db.exec(`
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
 
+  CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_chunks_fts USING fts5(
+    chunk_id UNINDEXED,
+    title,
+    heading,
+    content,
+    tags,
+    tokenize = 'porter unicode61'
+  );
+
+  CREATE TABLE IF NOT EXISTS automation_rules (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL,
+    category TEXT NOT NULL,
+    trigger_type TEXT NOT NULL,
+    condition_json TEXT NOT NULL,
+    action_json TEXT NOT NULL,
+    approval_required INTEGER NOT NULL DEFAULT 0 CHECK (approval_required IN (0, 1)),
+    enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+    cooldown_minutes INTEGER NOT NULL DEFAULT 1440 CHECK (cooldown_minutes BETWEEN 1 AND 43200),
+    created_by TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS automation_runs (
+    id TEXT PRIMARY KEY,
+    rule_id TEXT NOT NULL REFERENCES automation_rules(id) ON UPDATE CASCADE ON DELETE CASCADE,
+    signal_key TEXT NOT NULL UNIQUE,
+    status TEXT NOT NULL CHECK (status IN ('completed', 'awaiting_approval', 'rejected', 'no_match', 'failed')),
+    match_count INTEGER NOT NULL DEFAULT 0,
+    notification_count INTEGER NOT NULL DEFAULT 0,
+    attempt INTEGER NOT NULL DEFAULT 1,
+    summary TEXT NOT NULL,
+    payload_json TEXT NOT NULL DEFAULT '[]',
+    error_message TEXT NOT NULL DEFAULT '',
+    started_by TEXT NOT NULL,
+    decided_by TEXT,
+    decided_at TEXT,
+    started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    completed_at TEXT
+  );
+
+  CREATE INDEX IF NOT EXISTS automation_runs_rule_started_idx
+    ON automation_runs (rule_id, started_at DESC);
+
+  CREATE TABLE IF NOT EXISTS automation_notifications (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES automation_runs(id) ON UPDATE CASCADE ON DELETE CASCADE,
+    recipient TEXT NOT NULL,
+    channel TEXT NOT NULL DEFAULT 'in_app' CHECK (channel IN ('in_app')),
+    subject TEXT NOT NULL,
+    message TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'sent' CHECK (status IN ('sent', 'read', 'failed')),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    sent_at TEXT,
+    read_at TEXT
+  );
+
+  CREATE INDEX IF NOT EXISTS automation_notifications_status_idx
+    ON automation_notifications (status, created_at DESC);
+
   CREATE TABLE IF NOT EXISTS institution_profile (
     id TEXT PRIMARY KEY CHECK (id = 'primary'),
     name TEXT NOT NULL,
@@ -557,6 +683,20 @@ db.exec(`
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
 `)
+
+function ensureKnowledgeDocumentColumn(name, definition) {
+  const columns = db.prepare('PRAGMA table_info(knowledge_documents)').all()
+  if (!columns.some((column) => column.name === name)) {
+    db.exec(`ALTER TABLE knowledge_documents ADD COLUMN ${name} ${definition}`)
+  }
+}
+
+ensureKnowledgeDocumentColumn('audience', "TEXT NOT NULL DEFAULT 'everyone'")
+ensureKnowledgeDocumentColumn('version_label', "TEXT NOT NULL DEFAULT '1.0'")
+ensureKnowledgeDocumentColumn('effective_at', 'TEXT')
+ensureKnowledgeDocumentColumn('expires_at', 'TEXT')
+ensureKnowledgeDocumentColumn('page_count', 'INTEGER NOT NULL DEFAULT 1')
+ensureKnowledgeDocumentColumn('format', "TEXT NOT NULL DEFAULT 'text'")
 
 db.prepare(`
   INSERT OR IGNORE INTO institution_profile (
@@ -694,14 +834,46 @@ const insertAuthUserStatement = db.prepare(`
 `)
 
 const insertKnowledgeDocumentStatement = db.prepare(`
-  INSERT INTO knowledge_documents (id, title, source, owner, tags, status)
-  VALUES (?, ?, ?, ?, ?, ?)
+  INSERT INTO knowledge_documents (
+    id, title, source, owner, tags, status, audience, version_label,
+    effective_at, expires_at, page_count, format
+  )
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `)
 
 const insertKnowledgeChunkStatement = db.prepare(`
   INSERT INTO knowledge_chunks (id, document_id, chunk_index, heading, page_number, content, tags, token_count)
   VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 `)
+
+const insertKnowledgeFtsStatement = db.prepare(`
+  INSERT INTO knowledge_chunks_fts (chunk_id, title, heading, content, tags)
+  VALUES (?, ?, ?, ?, ?)
+`)
+
+const insertAutomationRuleStatement = db.prepare(`
+  INSERT INTO automation_rules (
+    id, name, description, category, trigger_type, condition_json, action_json,
+    approval_required, enabled, cooldown_minutes, created_by
+  )
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`)
+
+function insertAutomationRule(rule, actor = 'CampusOps System') {
+  insertAutomationRuleStatement.run(
+    rule.id,
+    rule.name,
+    rule.description,
+    rule.category,
+    rule.triggerType,
+    JSON.stringify(rule.condition ?? {}),
+    JSON.stringify(rule.action ?? {}),
+    rule.approvalRequired ? 1 : 0,
+    rule.enabled === false ? 0 : 1,
+    Number(rule.cooldownMinutes) || 1440,
+    actor,
+  )
+}
 
 function normalizeKnowledgeTags(tags) {
   const source = Array.isArray(tags) ? tags : String(tags ?? '').split(',')
@@ -712,39 +884,88 @@ function knowledgeTokenCount(value) {
   return safeString(value).split(/\s+/).filter(Boolean).length
 }
 
-function chunkKnowledgeBody(body) {
-  const rawBody = safeString(body)
-  if (!rawBody) {
+function chunkKnowledgeSection(text, heading, pageNumber) {
+  const content = safeString(text).replace(/\s+/g, ' ').trim()
+  if (!content) {
     return []
   }
 
-  const sections = rawBody
-    .split(/\n(?=# )/g)
-    .map((section) => section.trim())
-    .filter(Boolean)
+  const words = content.split(/\s+/)
+  if (words.length < 8) {
+    return []
+  }
+  const chunks = []
+  for (let index = 0; index < words.length; index += 120) {
+    chunks.push({
+      heading,
+      content: words.slice(index, index + 150).join(' '),
+      pageNumber,
+    })
+  }
+  return chunks
+}
 
-  const sourceSections = sections.length > 0 ? sections : [rawBody]
-  return sourceSections.flatMap((section, sectionIndex) => {
-    const lines = section.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
-    const headingLine = lines[0]?.startsWith('# ') ? lines.shift() : ''
-    const heading = headingLine ? headingLine.replace(/^#\s+/, '').trim() : `Section ${sectionIndex + 1}`
-    const content = lines.join(' ').replace(/\s+/g, ' ').trim()
+function chunkKnowledgePage(page, fallbackIndex) {
+  const pageNumber = Number.isInteger(Number(page?.pageNumber)) && Number(page.pageNumber) > 0
+    ? Number(page.pageNumber)
+    : fallbackIndex + 1
+  const rawText = safeString(page?.text ?? page?.content)
+  if (!rawText) {
+    return []
+  }
 
-    if (!content) {
-      return []
+  const lines = rawText.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
+  const suppliedHeading = safeString(page?.heading)
+  const sections = []
+  let current = { heading: suppliedHeading || `Page ${pageNumber}`, lines: [] }
+
+  const pushCurrent = () => {
+    if (current.lines.length > 0) {
+      sections.push(current)
     }
+  }
 
-    const words = content.split(/\s+/)
-    const chunks = []
-    for (let index = 0; index < words.length; index += 120) {
-      chunks.push({
-        heading,
-        content: words.slice(index, index + 150).join(' '),
-        pageNumber: sectionIndex + 1,
-      })
+  lines.forEach((line) => {
+    const markedHeading = line.match(/^#{1,3}\s+(.+)$/)
+    const wordCount = line.split(/\s+/).length
+    const likelyFooter = wordCount <= 12 && /page\s+\d+(?:\s+of\s+\d+)?$/i.test(line)
+    if (likelyFooter) {
+      return
     }
-    return chunks
+    const inferredHeading = !/[.!?;:]$/.test(line) && line.length <= 80 && wordCount <= 10
+    if (markedHeading || inferredHeading) {
+      pushCurrent()
+      current = { heading: markedHeading?.[1]?.trim() || line, lines: [] }
+      return
+    }
+    current.lines.push(line)
   })
+  pushCurrent()
+
+  return sections.flatMap((section) => chunkKnowledgeSection(
+    section.lines.join(' '),
+    section.heading || `Page ${pageNumber}`,
+    pageNumber,
+  ))
+}
+
+function knowledgePagesFromInput(input) {
+  const suppliedPages = Array.isArray(input?.pages)
+    ? input.pages.filter((page) => safeString(page?.text ?? page?.content))
+    : []
+  if (suppliedPages.length > 0) {
+    return suppliedPages
+  }
+
+  const rawBody = safeString(input?.body)
+  if (!rawBody) {
+    return []
+  }
+  return rawBody.split(/\f/g).map((text, index) => ({ pageNumber: index + 1, text }))
+}
+
+function chunkKnowledgeInput(input) {
+  return knowledgePagesFromInput(input).flatMap(chunkKnowledgePage)
 }
 
 function seedIfNeeded() {
@@ -790,9 +1011,39 @@ function seedIfNeeded() {
   if (knowledgeDocumentCount === 0) {
     seedKnowledgeDocuments.forEach((document) => insertKnowledgeDocument(document))
   }
+
+  const automationRuleCount = db.prepare('SELECT COUNT(*) AS count FROM automation_rules').get().count
+  if (automationRuleCount === 0) {
+    seedAutomationRules.forEach((rule) => insertAutomationRule(rule))
+  }
 }
 
 seedIfNeeded()
+
+function rebuildKnowledgeFtsIndex() {
+  db.exec('DELETE FROM knowledge_chunks_fts')
+  db.exec(`
+    INSERT INTO knowledge_chunks_fts (chunk_id, title, heading, content, tags)
+    SELECT c.id, d.title, c.heading, c.content, c.tags
+    FROM knowledge_chunks c
+    JOIN knowledge_documents d ON d.id = c.document_id
+  `)
+}
+
+db.prepare("UPDATE knowledge_documents SET audience = 'faculty' WHERE id = 'kb-timetable-mapping' AND audience = 'everyone'").run()
+db.prepare("UPDATE knowledge_documents SET audience = 'students' WHERE id = 'kb-placement-faq' AND audience = 'everyone'").run()
+db.prepare("UPDATE knowledge_documents SET audience = 'admin' WHERE id = 'kb-expense-policy' AND audience = 'everyone'").run()
+db.exec(`
+  UPDATE knowledge_documents
+  SET page_count = MAX(
+    page_count,
+    COALESCE(
+      (SELECT MAX(page_number) FROM knowledge_chunks WHERE document_id = knowledge_documents.id),
+      1
+    )
+  )
+`)
+rebuildKnowledgeFtsIndex()
 
 function makeReadableId(prefix, value) {
   const slug = slugify(value) || randomUUID().slice(0, 8)
@@ -1001,6 +1252,14 @@ export function createAuditEvent(event) {
 }
 
 function rowToKnowledgeDocument(row) {
+  const today = currentDateString()
+  const lifecycle = row.status === 'archived'
+    ? 'archived'
+    : row.effectiveAt && row.effectiveAt > today
+      ? 'scheduled'
+      : row.expiresAt && row.expiresAt < today
+        ? 'expired'
+        : 'current'
   return {
     id: row.id,
     title: row.title,
@@ -1008,6 +1267,13 @@ function rowToKnowledgeDocument(row) {
     owner: row.owner,
     tags: JSON.parse(row.tags || '[]'),
     status: row.status,
+    audience: row.audience ?? 'everyone',
+    versionLabel: row.versionLabel ?? '1.0',
+    effectiveAt: row.effectiveAt ?? '',
+    expiresAt: row.expiresAt ?? '',
+    pageCount: row.pageCount ?? 1,
+    format: row.format ?? 'text',
+    lifecycle,
     chunkCount: row.chunkCount ?? 0,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
@@ -1020,7 +1286,19 @@ function insertKnowledgeDocument(input) {
   const title = safeString(input.title).replace(/\s+/g, ' ')
   const source = safeString(input.source) || 'Uploaded document'
   const owner = safeString(input.owner) || 'Admin Office'
-  const chunks = chunkKnowledgeBody(input.body)
+  const pages = knowledgePagesFromInput(input)
+  const chunks = chunkKnowledgeInput(input)
+  const audience = ['everyone', 'students', 'faculty', 'admin'].includes(input?.audience)
+    ? input.audience
+    : 'everyone'
+  const versionLabel = safeString(input?.versionLabel) || '1.0'
+  const effectiveAt = nullableString(input?.effectiveAt)
+  const expiresAt = nullableString(input?.expiresAt)
+  const format = input?.format === 'pdf' || safeString(source).toLowerCase().endsWith('.pdf') ? 'pdf' : 'text'
+  const pageCount = Math.max(
+    Number(input?.pageCount) || 1,
+    ...pages.map((page, index) => Number(page?.pageNumber) || index + 1),
+  )
 
   if (title.length < 3) {
     throw new Error('Knowledge document title is required.')
@@ -1028,8 +1306,24 @@ function insertKnowledgeDocument(input) {
   if (chunks.length === 0) {
     throw new Error('Knowledge document body must include searchable text.')
   }
+  if (effectiveAt && expiresAt && effectiveAt > expiresAt) {
+    throw new Error('Policy expiry date must be after its effective date.')
+  }
 
-  insertKnowledgeDocumentStatement.run(id, title, source, owner, JSON.stringify(tags), 'active')
+  insertKnowledgeDocumentStatement.run(
+    id,
+    title,
+    source,
+    owner,
+    JSON.stringify(tags),
+    'active',
+    audience,
+    versionLabel,
+    effectiveAt,
+    expiresAt,
+    pageCount,
+    format,
+  )
   chunks.forEach((chunk, index) => {
     insertKnowledgeChunkStatement.run(
       `${id}-chunk-${index + 1}`,
@@ -1041,12 +1335,31 @@ function insertKnowledgeDocument(input) {
       JSON.stringify(tags),
       knowledgeTokenCount(chunk.content),
     )
+    insertKnowledgeFtsStatement.run(
+      `${id}-chunk-${index + 1}`,
+      title,
+      chunk.heading,
+      chunk.content,
+      tags.join(' '),
+    )
   })
 
   return id
 }
 
-export function getKnowledgeDocuments() {
+function knowledgeAudiencesForUser(user) {
+  if (user?.role === 'admin') {
+    return ['everyone', 'students', 'faculty', 'admin']
+  }
+  if (user?.role === 'faculty') {
+    return ['everyone', 'faculty']
+  }
+  return ['everyone', 'students']
+}
+
+export function getKnowledgeDocuments(user = { role: 'admin' }) {
+  const audiences = knowledgeAudiencesForUser(user)
+  const placeholders = audiences.map(() => '?').join(', ')
   return db
     .prepare(`
       SELECT
@@ -1056,28 +1369,39 @@ export function getKnowledgeDocuments() {
         d.owner,
         d.tags,
         d.status,
+        d.audience,
+        d.version_label AS versionLabel,
+        d.effective_at AS effectiveAt,
+        d.expires_at AS expiresAt,
+        d.page_count AS pageCount,
+        d.format,
         d.created_at AS createdAt,
         d.updated_at AS updatedAt,
         COUNT(c.id) AS chunkCount
       FROM knowledge_documents d
       LEFT JOIN knowledge_chunks c ON c.document_id = d.id
+      WHERE d.audience IN (${placeholders})
       GROUP BY d.id
       ORDER BY d.updated_at DESC, d.title
     `)
-    .all()
+    .all(...audiences)
     .map(rowToKnowledgeDocument)
 }
 
-export function getKnowledgeState() {
-  const documents = getKnowledgeDocuments()
+export function getKnowledgeState(user = { role: 'admin' }) {
+  const documents = getKnowledgeDocuments(user)
   return {
-    version: 1,
+    version: 2,
     source: 'sqlite',
     documents,
     stats: {
       documents: documents.length,
-      activeDocuments: documents.filter((document) => document.status === 'active').length,
-      chunks: db.prepare('SELECT COUNT(*) AS count FROM knowledge_chunks').get().count,
+      activeDocuments: documents.filter((document) => document.lifecycle === 'current').length,
+      chunks: documents
+        .filter((document) => document.lifecycle === 'current')
+        .reduce((total, document) => total + document.chunkCount, 0),
+      restrictedDocuments: documents.filter((document) => document.audience !== 'everyone').length,
+      pdfDocuments: documents.filter((document) => document.format === 'pdf').length,
     },
   }
 }
@@ -1111,6 +1435,7 @@ export function createKnowledgeDocument(input, actor = 'CampusOps Admin') {
 export function resetKnowledgeData(actor = 'CampusOps Admin') {
   db.exec('BEGIN')
   try {
+    db.exec('DELETE FROM knowledge_chunks_fts')
     db.exec('DELETE FROM knowledge_chunks')
     db.exec('DELETE FROM knowledge_documents')
     seedKnowledgeDocuments.forEach((document) => insertKnowledgeDocument(document))
@@ -1133,29 +1458,72 @@ export function resetKnowledgeData(actor = 'CampusOps Admin') {
   }
 }
 
+const knowledgeStopWords = new Set([
+  'and', 'are', 'can', 'does', 'for', 'from', 'how', 'the', 'this', 'what', 'when', 'where', 'which', 'who', 'with',
+])
+
+const knowledgeConcepts = {
+  attendance: ['attendance', 'presence', 'present', 'absence', 'absent', 'shortage'],
+  leave: ['leave', 'medical', 'permission', 'excused', 'absence'],
+  approval: ['approval', 'approve', 'approves', 'approved', 'authority', 'authorise', 'authorize', 'reviewer'],
+  timetable: ['timetable', 'schedule', 'period', 'slot', 'class', 'room', 'teacher'],
+  circular: ['circular', 'notice', 'announcement', 'communication', 'receipt', 'unread'],
+  placement: ['placement', 'company', 'drive', 'interview', 'recruitment', 'eligibility'],
+  expense: ['expense', 'reimbursement', 'invoice', 'payment', 'purchase', 'budget'],
+  deadline: ['deadline', 'expiry', 'expires', 'due', 'lastdate', 'closing'],
+}
+
 function tokenizeKnowledgeQuery(value) {
   return safeString(value)
     .toLowerCase()
     .replace(/[^a-z0-9 ]/g, ' ')
     .split(/\s+/)
-    .filter((token) => token.length > 2)
-    .slice(0, 12)
+    .filter((token) => token.length > 2 && !knowledgeStopWords.has(token))
+    .slice(0, 16)
 }
 
-function scoreKnowledgeChunk(row, tokens) {
+function expandKnowledgeTokens(tokens) {
+  const expanded = new Set(tokens)
+  Object.entries(knowledgeConcepts).forEach(([concept, terms]) => {
+    if (terms.some((term) => tokens.includes(term))) {
+      expanded.add(concept)
+      terms.forEach((term) => expanded.add(term))
+    }
+  })
+  return [...expanded].slice(0, 32)
+}
+
+function matchedKnowledgeConcepts(tokens) {
+  return Object.entries(knowledgeConcepts)
+    .filter(([, terms]) => terms.some((term) => tokens.includes(term)))
+    .map(([concept]) => concept)
+}
+
+function scoreKnowledgeChunk(row, tokens, expandedTokens, ftsRankScore) {
   const haystack = `${row.title} ${row.heading} ${row.content} ${row.tags}`.toLowerCase()
   const title = String(row.title ?? '').toLowerCase()
   const heading = String(row.heading ?? '').toLowerCase()
-  return tokens.reduce((score, token) => {
+  const exactScore = tokens.reduce((score, token) => {
     if (!haystack.includes(token)) {
       return score
     }
-
-    const titleBoost = title.includes(token) ? 5 : 0
-    const headingBoost = heading.includes(token) ? 3 : 0
+    const titleBoost = title.includes(token) ? 8 : 0
+    const headingBoost = heading.includes(token) ? 5 : 0
     const frequency = haystack.split(token).length - 1
-    return score + titleBoost + headingBoost + Math.min(frequency, 6)
+    return score + 4 + titleBoost + headingBoost + Math.min(frequency, 5)
   }, 0)
+  const semanticScore = expandedTokens
+    .filter((token) => !tokens.includes(token) && haystack.includes(token))
+    .reduce((score, token) => score + (heading.includes(token) ? 3 : title.includes(token) ? 4 : 1), 0)
+  const conceptScore = matchedKnowledgeConcepts(tokens).reduce((score, concept) => {
+    if (title.includes(concept)) return score + 20
+    if (heading.includes(concept)) return score + 14
+    if (haystack.includes(concept)) return score + 4
+    return score
+  }, 0)
+  const relevanceScore = exactScore + Math.min(semanticScore, 16) + conceptScore + ftsRankScore
+  const authorityBoost = relevanceScore > 0 && /handbook|policy|manual|standard operating|sop/i.test(`${row.source} ${row.title}`) ? 4 : 0
+  return relevanceScore + authorityBoost
 }
 
 function makeKnowledgeSnippet(content, tokens) {
@@ -1170,93 +1538,230 @@ function makeKnowledgeSnippet(content, tokens) {
   return `${start > 0 ? '...' : ''}${snippet}${start + 240 < text.length ? '...' : ''}`
 }
 
-export function searchKnowledgeBase(input = {}, actor = 'CampusOps') {
+function visibleKnowledgeRows(user) {
+  const audiences = knowledgeAudiencesForUser(user)
+  const placeholders = audiences.map(() => '?').join(', ')
+  const today = currentDateString()
+  return db.prepare(`
+    SELECT
+      c.id,
+      c.document_id AS documentId,
+      c.chunk_index AS chunkIndex,
+      c.heading,
+      c.page_number AS pageNumber,
+      c.content,
+      c.tags,
+      d.title,
+      d.source,
+      d.owner,
+      d.audience,
+      d.version_label AS versionLabel,
+      d.effective_at AS effectiveAt,
+      d.expires_at AS expiresAt,
+      d.format
+    FROM knowledge_chunks c
+    JOIN knowledge_documents d ON d.id = c.document_id
+    WHERE d.status = 'active'
+      AND d.audience IN (${placeholders})
+      AND (d.effective_at IS NULL OR d.effective_at = '' OR d.effective_at <= ?)
+      AND (d.expires_at IS NULL OR d.expires_at = '' OR d.expires_at >= ?)
+    ORDER BY d.updated_at DESC, c.chunk_index
+  `).all(...audiences, today, today)
+}
+
+function knowledgeFtsRank(tokens, user) {
+  if (tokens.length === 0) {
+    return new Map()
+  }
+  const audiences = knowledgeAudiencesForUser(user)
+  const placeholders = audiences.map(() => '?').join(', ')
+  const today = currentDateString()
+  const ftsQuery = tokens.map((token) => `"${token.replace(/"/g, '')}"`).join(' OR ')
+  try {
+    const matches = db.prepare(`
+      SELECT f.chunk_id AS chunkId
+      FROM knowledge_chunks_fts f
+      JOIN knowledge_chunks c ON c.id = f.chunk_id
+      JOIN knowledge_documents d ON d.id = c.document_id
+      WHERE knowledge_chunks_fts MATCH ?
+        AND d.status = 'active'
+        AND d.audience IN (${placeholders})
+        AND (d.effective_at IS NULL OR d.effective_at = '' OR d.effective_at <= ?)
+        AND (d.expires_at IS NULL OR d.expires_at = '' OR d.expires_at >= ?)
+      ORDER BY bm25(knowledge_chunks_fts, 0.0, 8.0, 6.0, 2.0, 3.0)
+      LIMIT 30
+    `).all(ftsQuery, ...audiences, today, today)
+    return new Map(matches.map((match, index) => [match.chunkId, Math.max(8, 40 - index * 2)]))
+  } catch {
+    return new Map()
+  }
+}
+
+function relevantKnowledgeSentences(content, tokens) {
+  const sentences = safeString(content).split(/(?<=[.!?])\s+/).filter(Boolean)
+  const ranked = sentences
+    .map((sentence, index) => ({
+      sentence,
+      index,
+      score: tokens.reduce((score, token) => score + (sentence.toLowerCase().includes(token) ? 1 : 0), 0),
+    }))
+    .sort((first, second) => second.score - first.score || first.index - second.index)
+    .slice(0, 2)
+    .sort((first, second) => first.index - second.index)
+  return ranked.map((item) => item.sentence).join(' ')
+}
+
+function knowledgeMatchReasons(row, tokens, expandedTokens, ftsRankScore) {
+  const reasons = []
+  const title = String(row.title).toLowerCase()
+  const heading = String(row.heading).toLowerCase()
+  if (tokens.some((token) => title.includes(token))) reasons.push('title match')
+  if (tokens.some((token) => heading.includes(token))) reasons.push('section match')
+  if (expandedTokens.some((token) => !tokens.includes(token) && `${title} ${heading} ${row.content}`.toLowerCase().includes(token))) {
+    reasons.push('related policy concept')
+  }
+  if (ftsRankScore > 0) reasons.push('FTS5 ranked match')
+  return reasons.length > 0 ? reasons : ['content match']
+}
+
+export function searchKnowledgeBase(input = {}, user = { role: 'admin', name: 'CampusOps' }, options = {}) {
   const query = safeString(input.query)
   const tokens = tokenizeKnowledgeQuery(query)
+  const expandedTokens = expandKnowledgeTokens(tokens)
+  const actor = safeString(user?.name) || 'CampusOps'
 
   if (tokens.length === 0) {
     return {
-      version: 1,
+      version: 2,
       query,
       answer: 'Ask a question with at least one searchable policy term.',
       citations: [],
       confidence: 0,
+      grounded: false,
+      retrievalMode: 'sqlite-fts5+concepts',
+      warnings: ['The question did not contain a searchable policy term.'],
     }
   }
 
-  const rows = db
-    .prepare(`
-      SELECT
-        c.id,
-        c.document_id AS documentId,
-        c.chunk_index AS chunkIndex,
-        c.heading,
-        c.page_number AS pageNumber,
-        c.content,
-        c.tags,
-        d.title,
-        d.source,
-        d.owner
-      FROM knowledge_chunks c
-      JOIN knowledge_documents d ON d.id = c.document_id
-      WHERE d.status = 'active'
-      ORDER BY d.updated_at DESC, c.chunk_index
-    `)
-    .all()
+  const rows = visibleKnowledgeRows(user)
+  const ftsRanks = knowledgeFtsRank(expandedTokens, user)
 
   const citations = rows
-    .map((row) => ({
-      id: row.id,
-      documentId: row.documentId,
-      title: row.title,
-      source: row.source,
-      owner: row.owner,
-      heading: row.heading,
-      pageNumber: row.pageNumber,
-      content: row.content,
-      snippet: makeKnowledgeSnippet(row.content, tokens),
-      tags: JSON.parse(row.tags || '[]'),
-      score: scoreKnowledgeChunk(row, tokens),
-    }))
+    .map((row) => {
+      const ftsRankScore = ftsRanks.get(row.id) ?? 0
+      return {
+        id: row.id,
+        documentId: row.documentId,
+        title: row.title,
+        source: row.source,
+        owner: row.owner,
+        heading: row.heading,
+        pageNumber: row.pageNumber,
+        content: row.content,
+        snippet: makeKnowledgeSnippet(row.content, expandedTokens),
+        tags: JSON.parse(row.tags || '[]'),
+        score: scoreKnowledgeChunk(row, tokens, expandedTokens, ftsRankScore),
+        audience: row.audience,
+        versionLabel: row.versionLabel,
+        effectiveAt: row.effectiveAt ?? '',
+        expiresAt: row.expiresAt ?? '',
+        format: row.format,
+        matchReasons: knowledgeMatchReasons(row, tokens, expandedTokens, ftsRankScore),
+      }
+    })
     .filter((row) => row.score > 0)
     .sort((first, second) => second.score - first.score)
     .slice(0, 5)
 
   if (citations.length === 0) {
-    createAuditEvent({
-      actor,
-      action: 'Searched knowledge base',
-      outcome: `No policy citations found for "${query}".`,
-      severity: 'warning',
-    })
+    if (options.audit !== false) {
+      createAuditEvent({
+        actor,
+        action: 'Searched knowledge base',
+        outcome: `No policy citations found for "${query}".`,
+        severity: 'warning',
+      })
+    }
     return {
-      version: 1,
+      version: 2,
       query,
-      answer: 'No matching policy citation was found. Try a more specific term or add the relevant office document.',
+      answer: 'I cannot answer this from the policies visible to your role. Try a more specific question or ask the policy owner to add the approved source.',
       citations: [],
       confidence: 0,
+      grounded: false,
+      retrievalMode: 'sqlite-fts5+concepts',
+      warnings: ['No current, role-visible policy evidence matched this question.'],
     }
   }
 
-  const confidence = Math.min(98, Math.round(54 + citations[0].score * 5 + citations.length * 4))
+  const confidence = Math.min(96, Math.round(35 + Math.min(citations[0].score, 70) * 0.68 + Math.min(citations.length, 3) * 3))
   const answer = citations
-    .slice(0, 3)
-    .map((citation) => `${citation.heading}: ${citation.snippet}`)
+    .slice(0, 2)
+    .map((citation) => `According to ${citation.title} (${citation.heading}, page ${citation.pageNumber}), ${relevantKnowledgeSentences(citation.content, expandedTokens)}`)
     .join('\n\n')
+  const warnings = confidence < 65
+    ? ['Evidence is limited. Review the cited policy text before taking action.']
+    : []
 
-  createAuditEvent({
-    actor,
-    action: 'Searched knowledge base',
-    outcome: `${citations.length} policy citations found for "${query}".`,
-    severity: 'info',
-  })
+  if (options.audit !== false) {
+    createAuditEvent({
+      actor,
+      action: 'Searched knowledge base',
+      outcome: `${citations.length} role-visible policy citations found for "${query}".`,
+      severity: 'info',
+    })
+  }
 
   return {
-    version: 1,
+    version: 2,
     query,
     answer,
     citations,
     confidence,
+    grounded: true,
+    retrievalMode: 'sqlite-fts5+concepts',
+    warnings,
+  }
+}
+
+const knowledgeEvaluationCases = [
+  { id: 'attendance', question: 'What minimum presence must students maintain in every subject?', expectedDocumentId: 'kb-attendance-leave', expectedTerm: '75 percent' },
+  { id: 'medical-leave', question: 'Who can approve medical leave for a period?', expectedDocumentId: 'kb-attendance-leave', expectedTerm: 'faculty' },
+  { id: 'timetable', question: 'Can one teacher be scheduled for two classes in the same period?', expectedDocumentId: 'kb-timetable-mapping', expectedTerm: 'same teacher' },
+  { id: 'circular', question: 'What should happen when urgent notices remain unread?', expectedDocumentId: 'kb-circular-engagement', expectedTerm: 'reminder' },
+  { id: 'placement', question: 'Can students register after the placement deadline?', expectedDocumentId: 'kb-placement-faq', expectedTerm: 'late registrations' },
+  { id: 'expense', question: 'Who approves a high value reimbursement?', expectedDocumentId: 'kb-expense-policy', expectedTerm: 'principal' },
+]
+
+export function runKnowledgeEvaluation(user = { role: 'admin', name: 'CampusOps Evaluator' }) {
+  const startedAt = Date.now()
+  const cases = knowledgeEvaluationCases.map((testCase) => {
+    const result = searchKnowledgeBase({ query: testCase.question }, user, { audit: false })
+    const citationCorrect = result.citations[0]?.documentId === testCase.expectedDocumentId
+    const answerSupported = result.answer.toLowerCase().includes(testCase.expectedTerm.toLowerCase())
+    return {
+      ...testCase,
+      citationCorrect,
+      answerSupported,
+      passed: citationCorrect && answerSupported,
+      confidence: result.confidence,
+      retrievedDocument: result.citations[0]?.title ?? 'No citation',
+    }
+  })
+  const passed = cases.filter((testCase) => testCase.passed).length
+  const citationPassed = cases.filter((testCase) => testCase.citationCorrect).length
+  const answerPassed = cases.filter((testCase) => testCase.answerSupported).length
+  return {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    retrievalMode: 'sqlite-fts5+concepts',
+    total: cases.length,
+    passed,
+    accuracy: Math.round((passed / cases.length) * 100),
+    citationAccuracy: Math.round((citationPassed / cases.length) * 100),
+    answerSupport: Math.round((answerPassed / cases.length) * 100),
+    durationMs: Date.now() - startedAt,
+    cases,
   }
 }
 
@@ -2030,6 +2535,14 @@ function makeImportContext() {
   const staffByEmail = new Map(staffProfiles.map((staff) => [importKey(staff.email), staff]))
   const academicSubjectByCode = new Map(academic.subjects.map((subject) => [importKey(subject.code), subject]))
   const timetableById = new Map(academic.slots.map((slot) => [slot.id, slot]))
+  const timetableByNaturalKey = new Map(
+    academic.slots.map((slot) => [
+      `${importKey(slot.classSectionId)}|${importKey(slot.day)}|${slot.periodNumber}`,
+      slot,
+    ]),
+  )
+  const classById = new Map(academic.classSections.map((section) => [section.id, section]))
+  const teacherById = new Map(academic.teachers.map((teacher) => [teacher.id, teacher]))
 
   return {
     academic,
@@ -2045,6 +2558,9 @@ function makeImportContext() {
     staffByEmail,
     academicSubjectByCode,
     timetableById,
+    timetableByNaturalKey,
+    classById,
+    teacherById,
   }
 }
 
@@ -2218,10 +2734,14 @@ function validateImportTimetable(row, rowNumber, context) {
     ? context.departments.find((department) => department.id === masterSubject.departmentId)
     : undefined
   const teacher = context.teacherByKey.get(importKey(teacherValue))
+  const naturalKey = classSection && day && Number.isInteger(periodNumber)
+    ? `${importKey(classSection.id)}|${importKey(day)}|${periodNumber}`
+    : ''
+  const existingNaturalSlot = naturalKey ? context.timetableByNaturalKey.get(naturalKey) : undefined
   const generatedSlotId = classSection && day && Number.isInteger(periodNumber)
     ? `slot-${classSection.id}-${slugify(day)}-${periodNumber}`
     : makeImportId('slot', `${classValue}-${dayValue}-${periodNumber}`)
-  const slotId = slotIdInput || generatedSlotId
+  const slotId = slotIdInput || existingNaturalSlot?.id || generatedSlotId
   const errors = []
 
   if (!classSection) {
@@ -2239,6 +2759,9 @@ function validateImportTimetable(row, rowNumber, context) {
   if (!/^\d{2}:\d{2}$/.test(endTime)) {
     errors.push('End Time must use HH:MM format.')
   }
+  if (/^\d{2}:\d{2}$/.test(startTime) && /^\d{2}:\d{2}$/.test(endTime) && startTime >= endTime) {
+    errors.push('End Time must be later than Start Time.')
+  }
   if (!academicSubject && !masterSubject) {
     errors.push('Subject Code must match an academic or master subject.')
   }
@@ -2253,6 +2776,7 @@ function validateImportTimetable(row, rowNumber, context) {
     rowNumber,
     data: row,
     errors,
+    conflicts: [],
     action: context.timetableById.has(slotId) ? 'update' : 'create',
     normalized: {
       id: slotId,
@@ -2271,6 +2795,87 @@ function validateImportTimetable(row, rowNumber, context) {
   }
 }
 
+function timeToMinutes(value) {
+  const [hours, minutes] = String(value).split(':').map(Number)
+  return hours * 60 + minutes
+}
+
+function timetableSlotsOverlap(first, second) {
+  if (first.day !== second.day) {
+    return false
+  }
+
+  return timeToMinutes(first.startTime) < timeToMinutes(second.endTime)
+    && timeToMinutes(second.startTime) < timeToMinutes(first.endTime)
+}
+
+function addImportConflict(row, message) {
+  const conflict = `Conflict: ${message}`
+  if (!row.conflicts.includes(conflict)) {
+    row.conflicts.push(conflict)
+    row.errors.push(conflict)
+  }
+}
+
+function timetableConflictMessages(first, second, context, location) {
+  const messages = []
+  const firstClass = context.classById.get(first.classSectionId)?.name ?? first.classSectionId
+  const secondClass = context.classById.get(second.classSectionId)?.name ?? second.classSectionId
+  const teacher = context.teacherById.get(first.teacherId)?.name ?? first.teacherId
+
+  if (first.classSectionId === second.classSectionId) {
+    messages.push(`${firstClass} already has ${location} on ${second.day} from ${second.startTime} to ${second.endTime}.`)
+  }
+  if (first.teacherId === second.teacherId) {
+    messages.push(`${teacher} is already assigned ${location} on ${second.day} from ${second.startTime} to ${second.endTime}.`)
+  }
+  if (importKey(first.room) === importKey(second.room)) {
+    messages.push(`Room ${first.room} is already used by ${secondClass} ${location} on ${second.day} from ${second.startTime} to ${second.endTime}.`)
+  }
+
+  return messages
+}
+
+function applyTimetableConflicts(rows, context) {
+  const candidates = rows.filter((row) => row.errors.length === 0)
+  const replacedSlotIds = new Set(candidates.map((row) => row.normalized.id))
+
+  candidates.forEach((row) => {
+    context.academic.slots.forEach((existing) => {
+      if (replacedSlotIds.has(existing.id) || !timetableSlotsOverlap(row.normalized, existing)) {
+        return
+      }
+
+      timetableConflictMessages(row.normalized, existing, context, 'in the existing timetable')
+        .forEach((message) => addImportConflict(row, message))
+    })
+  })
+
+  for (let firstIndex = 0; firstIndex < candidates.length; firstIndex += 1) {
+    for (let secondIndex = firstIndex + 1; secondIndex < candidates.length; secondIndex += 1) {
+      const first = candidates[firstIndex]
+      const second = candidates[secondIndex]
+
+      if (first.normalized.id === second.normalized.id) {
+        const className = context.classById.get(first.normalized.classSectionId)?.name ?? first.normalized.classSectionId
+        const message = `${className} ${first.normalized.day} period ${first.normalized.periodNumber} appears more than once in this file.`
+        addImportConflict(first, message)
+        addImportConflict(second, message)
+        continue
+      }
+
+      if (!timetableSlotsOverlap(first.normalized, second.normalized)) {
+        continue
+      }
+
+      timetableConflictMessages(first.normalized, second.normalized, context, `in uploaded row ${second.rowNumber}`)
+        .forEach((message) => addImportConflict(first, message))
+      timetableConflictMessages(second.normalized, first.normalized, context, `in uploaded row ${first.rowNumber}`)
+        .forEach((message) => addImportConflict(second, message))
+    }
+  }
+}
+
 function validateImportRows(kind, rows) {
   if (!importKinds.has(kind)) {
     throw new Error('Unsupported import type.')
@@ -2286,7 +2891,18 @@ function validateImportRows(kind, rows) {
 
   const reviewedRows = (Array.isArray(rows) ? rows : [])
     .slice(0, 1000)
-    .map((row, index) => validator(row, index + 2, context))
+    .map((row, index) => {
+      const reviewed = validator(row, index + 2, context)
+      return {
+        ...reviewed,
+        conflicts: reviewed.conflicts ?? [],
+      }
+    })
+
+  if (kind === 'timetable') {
+    applyTimetableConflicts(reviewedRows, context)
+  }
+
   const validRows = reviewedRows.filter((row) => row.errors.length === 0)
   const invalidRows = reviewedRows.filter((row) => row.errors.length > 0)
 
@@ -2301,6 +2917,7 @@ function validateImportRows(kind, rows) {
       invalid: invalidRows.length,
       creates: validRows.filter((row) => row.action === 'create').length,
       updates: validRows.filter((row) => row.action === 'update').length,
+      conflicts: reviewedRows.filter((row) => row.conflicts.length > 0).length,
     },
   }
 }
@@ -3469,6 +4086,579 @@ export function getActionCenter(filters = {}) {
   }
 }
 
+const automationSeverityRank = {
+  info: 1,
+  warning: 2,
+  critical: 3,
+}
+
+function parseAutomationJson(value, fallback) {
+  try {
+    return JSON.parse(value || '')
+  } catch {
+    return fallback
+  }
+}
+
+function rowToAutomationRule(row) {
+  return {
+    id: row.id,
+    name: row.name,
+    description: row.description,
+    category: row.category,
+    triggerType: row.triggerType,
+    condition: parseAutomationJson(row.conditionJson, {}),
+    action: parseAutomationJson(row.actionJson, {}),
+    approvalRequired: Boolean(row.approvalRequired),
+    enabled: Boolean(row.enabled),
+    cooldownMinutes: row.cooldownMinutes,
+    createdBy: row.createdBy,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  }
+}
+
+function rowToAutomationRun(row) {
+  return {
+    id: row.id,
+    ruleId: row.ruleId,
+    ruleName: row.ruleName,
+    category: row.category,
+    status: row.status,
+    matchCount: row.matchCount,
+    notificationCount: row.notificationCount,
+    attempt: row.attempt,
+    summary: row.summary,
+    errorMessage: row.errorMessage,
+    startedBy: row.startedBy,
+    decidedBy: row.decidedBy ?? '',
+    decidedAt: row.decidedAt ?? '',
+    startedAt: row.startedAt,
+    completedAt: row.completedAt ?? '',
+  }
+}
+
+function rowToAutomationNotification(row) {
+  return {
+    id: row.id,
+    runId: row.runId,
+    ruleName: row.ruleName,
+    recipient: row.recipient,
+    channel: row.channel,
+    subject: row.subject,
+    message: row.message,
+    status: row.status,
+    createdAt: row.createdAt,
+    sentAt: row.sentAt ?? '',
+    readAt: row.readAt ?? '',
+  }
+}
+
+function getAutomationRules() {
+  return db.prepare(`
+    SELECT
+      id,
+      name,
+      description,
+      category,
+      trigger_type AS triggerType,
+      condition_json AS conditionJson,
+      action_json AS actionJson,
+      approval_required AS approvalRequired,
+      enabled,
+      cooldown_minutes AS cooldownMinutes,
+      created_by AS createdBy,
+      created_at AS createdAt,
+      updated_at AS updatedAt
+    FROM automation_rules
+    ORDER BY category, name
+  `).all().map(rowToAutomationRule)
+}
+
+function getAutomationRuns(limit = 40) {
+  return db.prepare(`
+    SELECT
+      r.id,
+      r.rule_id AS ruleId,
+      rule.name AS ruleName,
+      rule.category,
+      r.status,
+      r.match_count AS matchCount,
+      r.notification_count AS notificationCount,
+      r.attempt,
+      r.summary,
+      r.error_message AS errorMessage,
+      r.started_by AS startedBy,
+      r.decided_by AS decidedBy,
+      r.decided_at AS decidedAt,
+      r.started_at AS startedAt,
+      r.completed_at AS completedAt
+    FROM automation_runs r
+    JOIN automation_rules rule ON rule.id = r.rule_id
+    ORDER BY r.started_at DESC, r.id DESC
+    LIMIT ?
+  `).all(limit).map(rowToAutomationRun)
+}
+
+function getLatestAutomationRun(ruleId) {
+  const row = db.prepare(`
+    SELECT
+      r.id,
+      r.rule_id AS ruleId,
+      rule.name AS ruleName,
+      rule.category,
+      r.status,
+      r.match_count AS matchCount,
+      r.notification_count AS notificationCount,
+      r.attempt,
+      r.summary,
+      r.error_message AS errorMessage,
+      r.started_by AS startedBy,
+      r.decided_by AS decidedBy,
+      r.decided_at AS decidedAt,
+      r.started_at AS startedAt,
+      r.completed_at AS completedAt
+    FROM automation_runs r
+    JOIN automation_rules rule ON rule.id = r.rule_id
+    WHERE r.rule_id = ?
+    ORDER BY r.started_at DESC, r.id DESC
+    LIMIT 1
+  `).get(ruleId)
+  return row ? rowToAutomationRun(row) : null
+}
+
+function getAutomationNotifications(limit = 40) {
+  return db.prepare(`
+    SELECT
+      notification.id,
+      notification.run_id AS runId,
+      rule.name AS ruleName,
+      notification.recipient,
+      notification.channel,
+      notification.subject,
+      notification.message,
+      notification.status,
+      notification.created_at AS createdAt,
+      notification.sent_at AS sentAt,
+      notification.read_at AS readAt
+    FROM automation_notifications notification
+    JOIN automation_runs run ON run.id = notification.run_id
+    JOIN automation_rules rule ON rule.id = run.rule_id
+    ORDER BY notification.created_at DESC, notification.id DESC
+    LIMIT ?
+  `).all(limit).map(rowToAutomationNotification)
+}
+
+function automationSignalItems(rule) {
+  const minimumSeverity = safeString(rule.condition?.minimumSeverity) || 'info'
+  const minimumRank = automationSeverityRank[minimumSeverity] ?? automationSeverityRank.info
+  const actionItems = getActionCenter({ role: 'admin' }).items
+  const relevantActions = actionItems.filter((item) => {
+    if (rule.triggerType === 'attendance_gap') return item.source === 'Daily attendance check'
+    if (rule.triggerType === 'pending_leave') return item.category === 'Leave'
+    if (rule.triggerType === 'attendance_shortage') return item.source === 'Attendance shortage report'
+    if (rule.triggerType === 'circular_unread') return item.category === 'Circulars'
+    return false
+  })
+
+  if (rule.triggerType !== 'policy_expiry') {
+    return relevantActions
+      .filter((item) => (automationSeverityRank[item.severity] ?? 0) >= minimumRank)
+      .slice(0, 100)
+  }
+
+  const today = currentDateString()
+  const todayMs = Date.parse(`${today}T00:00:00Z`)
+  const daysBefore = Math.max(1, Math.min(Number(rule.condition?.daysBefore) || 30, 365))
+  return getKnowledgeDocuments({ role: 'admin' })
+    .filter((document) => document.status === 'active' && document.expiresAt)
+    .map((document) => ({
+      document,
+      daysRemaining: Math.ceil((Date.parse(`${document.expiresAt}T00:00:00Z`) - todayMs) / 86_400_000),
+    }))
+    .filter(({ daysRemaining }) => daysRemaining >= 0 && daysRemaining <= daysBefore)
+    .map(({ document, daysRemaining }) => ({
+      id: `ACTION-POLICY-${document.id}`,
+      category: 'Knowledge',
+      severity: daysRemaining <= 7 ? 'critical' : 'warning',
+      title: `Policy expires in ${daysRemaining} day${daysRemaining === 1 ? '' : 's'}: ${document.title}`,
+      detail: `${document.source} version ${document.versionLabel} expires on ${document.expiresAt}. Review or replace the approved source before retrieval stops.`,
+      owner: document.owner,
+      dueDate: document.expiresAt,
+      source: 'Policy lifecycle check',
+      targetSection: 'knowledge',
+      actionLabel: 'Open knowledge',
+      status: 'open',
+      metricLabel: 'Days left',
+      metricValue: daysRemaining,
+    }))
+    .slice(0, 100)
+}
+
+function automationSignalKey(rule, signals, force = false) {
+  const cooldownMs = Math.max(1, rule.cooldownMinutes) * 60_000
+  const timeBucket = Math.floor(Date.now() / cooldownMs)
+  const fingerprint = JSON.stringify({
+    ruleId: rule.id,
+    timeBucket,
+    signalIds: signals.map((signal) => signal.id).sort(),
+    force: force ? randomUUID() : '',
+  })
+  return createHash('sha256').update(fingerprint).digest('hex')
+}
+
+function createAutomationNotifications(runId, rule, signals) {
+  const signalsByRecipient = new Map()
+  signals.forEach((signal) => {
+    const recipient = safeString(signal.owner) || 'Admin Office'
+    const existing = signalsByRecipient.get(recipient) ?? []
+    existing.push(signal)
+    signalsByRecipient.set(recipient, existing)
+  })
+
+  const insertNotification = db.prepare(`
+    INSERT INTO automation_notifications (
+      id, run_id, recipient, channel, subject, message, status, sent_at
+    )
+    VALUES (?, ?, ?, 'in_app', ?, ?, 'sent', CURRENT_TIMESTAMP)
+  `)
+
+  signalsByRecipient.forEach((recipientSignals, recipient) => {
+    const preview = recipientSignals.slice(0, 3).map((signal) => signal.title).join('; ')
+    const remaining = Math.max(0, recipientSignals.length - 3)
+    insertNotification.run(
+      `NOTIFY-${Date.now()}-${randomUUID().slice(0, 8)}`,
+      runId,
+      recipient,
+      rule.name,
+      `${preview}${remaining > 0 ? `; and ${remaining} more item${remaining === 1 ? '' : 's'}` : ''}`,
+    )
+  })
+
+  const notificationCount = signalsByRecipient.size
+  db.prepare('UPDATE automation_runs SET notification_count = ? WHERE id = ?').run(notificationCount, runId)
+  return notificationCount
+}
+
+function getAutomationRunRecord(id) {
+  return db.prepare(`
+    SELECT
+      r.*,
+      rule.name AS rule_name,
+      rule.category AS rule_category
+    FROM automation_runs r
+    JOIN automation_rules rule ON rule.id = r.rule_id
+    WHERE r.id = ?
+  `).get(id)
+}
+
+function executeAutomationRule(rule, actor, options = {}) {
+  const signals = automationSignalItems(rule)
+  const signalKey = automationSignalKey(rule, signals, options.force)
+  const existing = db.prepare('SELECT id FROM automation_runs WHERE signal_key = ?').get(signalKey)
+  if (existing) {
+    return {
+      ...getAutomationRuns(100).find((run) => run.id === existing.id),
+      deduplicated: true,
+    }
+  }
+
+  const runId = `AUTO-${Date.now()}-${randomUUID().slice(0, 8)}`
+  const status = signals.length === 0
+    ? 'no_match'
+    : rule.approvalRequired
+      ? 'awaiting_approval'
+      : 'completed'
+  const summary = signals.length === 0
+    ? `${rule.name} checked live college data and found no matching work.`
+    : `${signals.length} live signal${signals.length === 1 ? '' : 's'} matched ${rule.name}.`
+  const completedAt = ['completed', 'no_match'].includes(status) ? new Date().toISOString() : null
+
+  db.prepare(`
+    INSERT INTO automation_runs (
+      id, rule_id, signal_key, status, match_count, notification_count, attempt,
+      summary, payload_json, error_message, started_by, completed_at
+    )
+    VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, '', ?, ?)
+  `).run(
+    runId,
+    rule.id,
+    signalKey,
+    status,
+    signals.length,
+    Number(options.attempt) || 1,
+    summary,
+    JSON.stringify(signals),
+    actor,
+    completedAt,
+  )
+
+  if (status === 'completed') {
+    createAutomationNotifications(runId, rule, signals)
+  }
+
+  return {
+    ...getAutomationRuns(100).find((run) => run.id === runId),
+    deduplicated: false,
+  }
+}
+
+function recordFailedAutomationRun(rule, actor, error, attempt = 1) {
+  const runId = `AUTO-${Date.now()}-${randomUUID().slice(0, 8)}`
+  db.prepare(`
+    INSERT INTO automation_runs (
+      id, rule_id, signal_key, status, match_count, notification_count, attempt,
+      summary, payload_json, error_message, started_by, completed_at
+    )
+    VALUES (?, ?, ?, 'failed', 0, 0, ?, ?, '[]', ?, ?, CURRENT_TIMESTAMP)
+  `).run(
+    runId,
+    rule.id,
+    `${rule.id}-failed-${randomUUID()}`,
+    attempt,
+    `${rule.name} could not complete.`,
+    error instanceof Error ? error.message : 'Unknown automation error',
+    actor,
+  )
+  return getAutomationRuns(100).find((run) => run.id === runId)
+}
+
+export function getAutomationState() {
+  const rules = getAutomationRules()
+  const runs = getAutomationRuns()
+  const notifications = getAutomationNotifications()
+  const today = currentDateString()
+  const rulesWithLastRun = rules.map((rule) => ({
+    ...rule,
+    lastRun: getLatestAutomationRun(rule.id),
+  }))
+  const runSummary = db.prepare(`
+    SELECT
+      SUM(CASE WHEN date(started_at) = ? THEN 1 ELSE 0 END) AS runsToday,
+      SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS completedRuns,
+      SUM(CASE WHEN status = 'awaiting_approval' THEN 1 ELSE 0 END) AS awaitingApproval,
+      SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failedRuns
+    FROM automation_runs
+  `).get(today)
+  const unreadNotifications = db.prepare(`
+    SELECT COUNT(*) AS count
+    FROM automation_notifications
+    WHERE status = 'sent'
+  `).get().count
+
+  return {
+    version: 1,
+    source: 'sqlite',
+    generatedAt: new Date().toISOString(),
+    summary: {
+      rules: rules.length,
+      enabledRules: rules.filter((rule) => rule.enabled).length,
+      runsToday: runSummary.runsToday ?? 0,
+      completedRuns: runSummary.completedRuns ?? 0,
+      awaitingApproval: runSummary.awaitingApproval ?? 0,
+      failedRuns: runSummary.failedRuns ?? 0,
+      unreadNotifications,
+    },
+    rules: rulesWithLastRun,
+    runs,
+    notifications,
+  }
+}
+
+export function runAutomationRules(input = {}, actor = 'CampusOps Admin') {
+  const requestedRuleId = safeString(input?.ruleId)
+  const schedulerRun = input?.scheduler === true
+  const allRules = getAutomationRules()
+  const selectedRules = requestedRuleId
+    ? allRules.filter((rule) => rule.id === requestedRuleId)
+    : allRules.filter((rule) => rule.enabled)
+
+  if (selectedRules.length === 0) {
+    throw new Error(requestedRuleId ? 'Automation rule was not found.' : 'No automation rules are enabled.')
+  }
+  if (selectedRules.some((rule) => !rule.enabled)) {
+    throw new Error('Enable the automation rule before running it.')
+  }
+
+  const runs = selectedRules.map((rule) => {
+    try {
+      return executeAutomationRule(rule, actor)
+    } catch (error) {
+      return recordFailedAutomationRun(rule, actor, error)
+    }
+  })
+  const deduplicatedCount = runs.filter((run) => run.deduplicated).length
+  const auditEvent = !schedulerRun || deduplicatedCount < runs.length
+    ? createAuditEvent({
+        actor,
+        action: schedulerRun
+          ? 'Scheduled automation check'
+          : requestedRuleId
+            ? 'Ran automation rule'
+            : 'Ran automation checks',
+        outcome: `${runs.length} rule${runs.length === 1 ? '' : 's'} checked; ${deduplicatedCount} duplicate run${deduplicatedCount === 1 ? '' : 's'} safely suppressed.`,
+        severity: runs.some((run) => run.status === 'failed') ? 'warning' : 'success',
+      })
+    : null
+
+  return {
+    runs,
+    auditEvent,
+    state: getAutomationState(),
+  }
+}
+
+export function updateAutomationRule(id, input = {}, actor = 'CampusOps Admin') {
+  const current = getAutomationRules().find((rule) => rule.id === id)
+  if (!current) {
+    return null
+  }
+
+  const enabled = typeof input.enabled === 'boolean' ? input.enabled : current.enabled
+  const approvalRequired = typeof input.approvalRequired === 'boolean'
+    ? input.approvalRequired
+    : current.approvalRequired
+  const cooldownMinutes = input.cooldownMinutes === undefined
+    ? current.cooldownMinutes
+    : Number(input.cooldownMinutes)
+
+  if (!Number.isInteger(cooldownMinutes) || cooldownMinutes < 1 || cooldownMinutes > 43_200) {
+    throw new Error('Automation cooldown must be between 1 and 43,200 minutes.')
+  }
+
+  db.prepare(`
+    UPDATE automation_rules
+    SET enabled = ?, approval_required = ?, cooldown_minutes = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(enabled ? 1 : 0, approvalRequired ? 1 : 0, cooldownMinutes, id)
+
+  const rule = getAutomationRules().find((item) => item.id === id)
+  const auditEvent = createAuditEvent({
+    actor,
+    action: 'Updated automation rule',
+    outcome: `${rule.name} is ${rule.enabled ? 'enabled' : 'paused'} with a ${rule.cooldownMinutes}-minute cooldown${rule.approvalRequired ? ' and a human approval gate' : ''}.`,
+    severity: 'info',
+  })
+
+  return {
+    rule,
+    auditEvent,
+    state: getAutomationState(),
+  }
+}
+
+export function decideAutomationRun(id, input = {}, actor = 'CampusOps Admin') {
+  const decision = safeString(input?.decision).toLowerCase()
+  if (!['approve', 'reject'].includes(decision)) {
+    throw new Error('Automation decision must be approve or reject.')
+  }
+
+  const runRecord = getAutomationRunRecord(id)
+  if (!runRecord) {
+    return null
+  }
+  if (runRecord.status !== 'awaiting_approval') {
+    throw new Error('Only automation runs awaiting approval can be decided.')
+  }
+
+  const rule = getAutomationRules().find((item) => item.id === runRecord.rule_id)
+  const signals = parseAutomationJson(runRecord.payload_json, [])
+  const nextStatus = decision === 'approve' ? 'completed' : 'rejected'
+  db.prepare(`
+    UPDATE automation_runs
+    SET status = ?, decided_by = ?, decided_at = CURRENT_TIMESTAMP, completed_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(nextStatus, actor, id)
+
+  if (decision === 'approve') {
+    createAutomationNotifications(id, rule, signals)
+  }
+
+  const auditEvent = createAuditEvent({
+    actor,
+    action: decision === 'approve' ? 'Approved automation run' : 'Rejected automation run',
+    outcome: `${rule.name} ${decision === 'approve' ? 'completed and released its notifications' : 'was stopped before external action'}.`,
+    severity: decision === 'approve' ? 'success' : 'warning',
+  })
+
+  return {
+    run: getAutomationRuns(100).find((run) => run.id === id),
+    auditEvent,
+    state: getAutomationState(),
+  }
+}
+
+export function retryAutomationRun(id, actor = 'CampusOps Admin') {
+  const runRecord = getAutomationRunRecord(id)
+  if (!runRecord) {
+    return null
+  }
+  if (runRecord.status !== 'failed') {
+    throw new Error('Only failed automation runs can be retried.')
+  }
+
+  const rule = getAutomationRules().find((item) => item.id === runRecord.rule_id)
+  let run
+  try {
+    run = executeAutomationRule(rule, actor, { force: true, attempt: runRecord.attempt + 1 })
+  } catch (error) {
+    run = recordFailedAutomationRun(rule, actor, error, runRecord.attempt + 1)
+  }
+  const auditEvent = createAuditEvent({
+    actor,
+    action: 'Retried automation run',
+    outcome: `${rule.name} retry attempt ${run.attempt} finished with status ${run.status}.`,
+    severity: run.status === 'failed' ? 'warning' : 'success',
+  })
+
+  return {
+    run,
+    auditEvent,
+    state: getAutomationState(),
+  }
+}
+
+export function markAutomationNotificationRead(id) {
+  const notification = db.prepare('SELECT id FROM automation_notifications WHERE id = ?').get(id)
+  if (!notification) {
+    return null
+  }
+  db.prepare(`
+    UPDATE automation_notifications
+    SET status = 'read', read_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(id)
+  return {
+    notification: getAutomationNotifications(100).find((item) => item.id === id),
+    state: getAutomationState(),
+  }
+}
+
+export function resetAutomationData(actor = 'CampusOps Admin') {
+  db.exec('BEGIN')
+  try {
+    db.exec('DELETE FROM automation_notifications')
+    db.exec('DELETE FROM automation_runs')
+    db.exec('DELETE FROM automation_rules')
+    seedAutomationRules.forEach((rule) => insertAutomationRule(rule, actor))
+    db.exec('COMMIT')
+  } catch (error) {
+    db.exec('ROLLBACK')
+    throw error
+  }
+
+  const auditEvent = createAuditEvent({
+    actor,
+    action: 'Reset automation controls',
+    outcome: 'Automation rules, runs, and in-app notifications were reset to college-safe defaults.',
+    severity: 'warning',
+  })
+  return {
+    ...getAutomationState(),
+    auditEvent,
+  }
+}
+
 export function getReports(filters = {}) {
   const cleanFilters = normalizeReportFilters(filters)
   const context = getReportContext()
@@ -3803,6 +4993,9 @@ export function getDatabaseInfo() {
     circularReadReceipts: db.prepare('SELECT COUNT(*) AS count FROM circular_read_receipts').get().count,
     knowledgeDocuments: db.prepare('SELECT COUNT(*) AS count FROM knowledge_documents').get().count,
     knowledgeChunks: db.prepare('SELECT COUNT(*) AS count FROM knowledge_chunks').get().count,
+    automationRules: db.prepare('SELECT COUNT(*) AS count FROM automation_rules').get().count,
+    automationRuns: db.prepare('SELECT COUNT(*) AS count FROM automation_runs').get().count,
+    automationNotifications: db.prepare('SELECT COUNT(*) AS count FROM automation_notifications').get().count,
     users: db.prepare('SELECT COUNT(*) AS count FROM auth_users').get().count,
     activeSessions: db.prepare('SELECT COUNT(*) AS count FROM auth_sessions').get().count,
     auditEvents: db.prepare('SELECT COUNT(*) AS count FROM audit_events').get().count,

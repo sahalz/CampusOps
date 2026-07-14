@@ -61,7 +61,19 @@ In Action Center:
 4. Open an action to jump into the related module.
 5. Mark an action reviewed and show that the audit trail records the action.
 
-## 5. Master Data Demo
+## 5. Automation Control Demo
+
+In Automation:
+
+1. Show the five enabled SQLite rules and explain their trigger, action, cooldown, and approval settings.
+2. Select `Run enabled rules` to evaluate live attendance, leave, shortage, circular, and policy signals.
+3. Point out that the pending-leave escalation enters the human approval queue without releasing a notification.
+4. Approve the guarded run and show the grouped in-app notification appear.
+5. Run the same rule again and explain that the cooldown fingerprint suppresses a duplicate execution.
+6. Pause one rule, change its cooldown, and show that the configuration persists after refresh.
+7. Open Audit Trail to show the run, rule update, and approval decision.
+
+## 6. Master Data Demo
 
 In Master Data:
 
@@ -72,18 +84,20 @@ In Master Data:
 5. Try a duplicate subject code to show validation.
 6. Show that audit events are recorded.
 
-## 6. Knowledge RAG Demo
+## 7. Knowledge RAG Demo
 
 In Knowledge:
 
-1. Show the sync chip: `SQLite RAG knowledge base connected`.
-2. Ask: `What is the minimum attendance requirement?`
-3. Show the grounded answer and citations from the Academic Handbook.
-4. Ask: `Who approves medical leave for a period?`
-5. As Admin, paste or load a plain text policy document and save it.
-6. Search a tag such as `circular` or `placement` to show source-backed retrieval.
+1. Show the hybrid retrieval note: `SQLite FTS5 + concepts` and role visibility applied before retrieval.
+2. Ask: `What is the minimum presence requirement for students?` to demonstrate related-concept retrieval.
+3. Show the grounded answer, match reasons, version, source, section, and page citation.
+4. Ask an unsupported question and show the safe refusal instead of an invented answer.
+5. As Admin, load a text-based policy PDF and show its page and word extraction summary.
+6. Set the policy audience, version, effective date, and expiry date before saving.
+7. Search for a term found on page 2 and verify the returned page-level citation.
+8. Run the RAG evaluation and show retrieval accuracy, citation accuracy, answer support, and individual case results.
 
-## 7. Circular Intelligence Demo
+## 8. Circular Intelligence Demo
 
 In Circulars:
 
@@ -93,19 +107,21 @@ In Circulars:
 4. Mark a notice read and show unread counts update.
 5. Publish a new circular as Admin and search for a term from the message.
 
-## 8. Import Center Demo
+## 9. Import Center Demo
 
 In Upload Data:
 
 1. Choose `Student list` or `Timetable`.
 2. Add a text-based PDF, CSV, or XLSX file.
 3. For PDF, show automatic list-type recognition, detected columns, and mapping confidence.
-4. Show that correct rows and rows needing correction are kept in separate tabs.
-5. Search preview rows to find a roll number, department, or validation issue.
-6. Download the correction workbook when a row is incomplete or uncertain.
-7. Save only the correct rows and show that the backend records an audit event.
+4. Open `Review mapping` and show that an unusual file heading can be matched to the correct CampusOps field.
+5. Show that correct rows and rows needing correction are kept in separate tabs.
+6. Edit one rejected row, recheck it, and show it move into `Ready` without re-uploading the file.
+7. For a timetable, show that overlapping teacher, room, or class assignments are blocked before saving.
+8. Search preview rows or download the correction workbook for office follow-up.
+9. Save only the correct rows and show that the backend records an audit event.
 
-## 9. Reports Demo
+## 10. Reports Demo
 
 In Reports:
 
@@ -117,7 +133,7 @@ In Reports:
 6. Export one report as CSV, PDF, and XLSX and show that audit events are recorded.
 7. Use Print to show the office-friendly print layout.
 
-## 10. Academic Workflow Demo
+## 11. Academic Workflow Demo
 
 1. Map a timetable period.
 2. Select a timetable slot.
@@ -125,7 +141,7 @@ In Reports:
 4. Submit a period-wise leave request.
 5. Approve or reject the leave.
 
-## 11. Faculty Login
+## 12. Faculty Login
 
 Logout and choose:
 
@@ -145,7 +161,7 @@ Show:
 - Read-only Master Data view for department and assigned subjects
 - Limited My Reports view for assigned leave and workload backed by backend RBAC
 
-## 12. Student Login
+## 13. Student Login
 
 Logout and choose:
 

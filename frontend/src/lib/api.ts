@@ -1,5 +1,9 @@
 import type {
   ActionCenterPayload,
+  AutomationNotification,
+  AutomationRule,
+  AutomationRun,
+  AutomationState,
   AttendanceRecord,
   AuthSession,
   AuditEvent,
@@ -16,6 +20,7 @@ import type {
   InstitutionState,
   KnowledgeSearchPayload,
   KnowledgeState,
+  KnowledgeEvaluationPayload,
   LeaveRequest,
   MasterDepartment,
   MasterSubject,
@@ -103,12 +108,27 @@ type ActionCenterActionInput = {
   severity?: AuditEvent['severity']
 }
 
+type AutomationMutationResponse = {
+  state: AutomationState
+  auditEvent: AuditEvent
+  runs?: AutomationRun[]
+  run?: AutomationRun
+  rule?: AutomationRule
+}
+
 export type KnowledgeDocumentInput = {
   title: string
   source: string
   owner: string
   tags: string[]
   body: string
+  pages?: Array<{ pageNumber: number; text: string }>
+  pageCount?: number
+  audience: 'everyone' | 'students' | 'faculty' | 'admin'
+  versionLabel: string
+  effectiveAt?: string
+  expiresAt?: string
+  format: 'text' | 'pdf'
 }
 
 const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL ?? '/api').replace(/\/$/, '')
@@ -373,6 +393,57 @@ export async function recordActionCenterActionOnServer(action: ActionCenterActio
   return response.auditEvent
 }
 
+export function fetchAutomationState() {
+  return requestJson<AutomationState>('/automations')
+}
+
+export function runAutomationsOnServer(ruleId?: string) {
+  return requestJson<AutomationMutationResponse>(
+    '/automations/run',
+    {
+      method: 'POST',
+      body: JSON.stringify(ruleId ? { ruleId } : {}),
+    },
+    8000,
+  )
+}
+
+export function updateAutomationRuleOnServer(
+  id: string,
+  input: Partial<Pick<AutomationRule, 'enabled' | 'approvalRequired' | 'cooldownMinutes'>>,
+) {
+  return requestJson<AutomationMutationResponse>(`/automations/rules/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    body: JSON.stringify(input),
+  })
+}
+
+export function decideAutomationRunOnServer(id: string, decision: 'approve' | 'reject') {
+  return requestJson<AutomationMutationResponse>(`/automations/runs/${encodeURIComponent(id)}/decision`, {
+    method: 'POST',
+    body: JSON.stringify({ decision }),
+  })
+}
+
+export function retryAutomationRunOnServer(id: string) {
+  return requestJson<AutomationMutationResponse>(`/automations/runs/${encodeURIComponent(id)}/retry`, {
+    method: 'POST',
+  })
+}
+
+export function markAutomationNotificationReadOnServer(id: string) {
+  return requestJson<{ state: AutomationState; notification: AutomationNotification }>(
+    `/automations/notifications/${encodeURIComponent(id)}/read`,
+    { method: 'POST' },
+  )
+}
+
+export function resetAutomationOnServer() {
+  return requestJson<AutomationState & { auditEvent: AuditEvent }>('/automations/reset', {
+    method: 'POST',
+  })
+}
+
 export async function recordReportActionOnServer(action: ReportActionInput) {
   const response = await requestJson<AuditEventResponse>('/reports/actions', {
     method: 'POST',
@@ -416,6 +487,10 @@ export function searchKnowledgeOnServer(query: string) {
     },
     8000,
   )
+}
+
+export function runKnowledgeEvaluationOnServer() {
+  return requestJson<KnowledgeEvaluationPayload>('/knowledge/evaluation', undefined, 12000)
 }
 
 export function createKnowledgeDocumentOnServer(document: KnowledgeDocumentInput) {

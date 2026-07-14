@@ -34,12 +34,14 @@ Follow the readiness checklist in order:
 1. Create departments and subject catalogs in Master Data.
 2. Upload text-based PDF, CSV, or XLSX student and staff lists. PDF tables are mapped automatically when they contain recognizable headers.
 3. Upload a long-form timetable PDF or spreadsheet containing class section, day, period, time, subject, faculty, and room columns.
-4. Add approved policies to Knowledge with a clear source and owner.
+4. Add approved, text-based policy PDFs to Knowledge with a clear owner, audience, version, effective date, and expiry date. Run the RAG evaluation after policy changes.
 5. Publish a test circular to the smallest correct audience.
 
-Use import preview validation before every commit. Export rejected rows, correct them outside the system, and re-upload them rather than accepting partial or ambiguous data.
+Use import preview validation before every commit. Review automatic column mapping, correct simple rejected rows directly in the preview, and export the correction workbook when the source owner must repair several records. Timetable rows with teacher, room, class, duplicate-slot, or time-overlap conflicts remain blocked until corrected.
 
 Scanned image-only PDFs require OCR before upload. CampusOps deliberately keeps missing or uncertain fields in `Needs correction` instead of inventing official student or timetable data.
+
+Policy retrieval is also evidence-first: only current documents visible to the signed-in role are searched. When no approved source matches, the Knowledge workspace returns a safe refusal instead of generating an unsupported policy answer.
 
 ## 4. Run a Two-Week Operational Pilot
 
@@ -49,6 +51,7 @@ During the pilot:
 - Students submit leave against the exact date and period.
 - Faculty review assigned leave decisions.
 - Administrators start each day in Home, then work through Action Center.
+- The pilot owner reviews Automation Control, keeps safe reminders enabled, and approves guarded escalation runs before notifications are released.
 - The academic office exports the shortage and pending-leave reports weekly.
 - The pilot owner checks audit events and unresolved data-quality actions.
 
@@ -65,6 +68,7 @@ The current repository is a strong local pilot, but a production rollout should 
 - HTTPS, secret management, centralized logs, monitoring, and alerting
 - Data retention rules, privacy review, and documented administrator responsibilities
 - Staging, acceptance testing, release management, and a support owner
+- A dedicated background worker or managed job service for automation when moving beyond the local single-process pilot
 
 Do not treat the seeded users or demonstration data as production identity or official academic records.
 

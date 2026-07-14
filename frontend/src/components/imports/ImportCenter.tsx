@@ -7,7 +7,9 @@ import {
   FileCheck2,
   FileSpreadsheet,
   FileText,
+  Pencil,
   RefreshCw,
+  SlidersHorizontal,
   Search,
   Sparkles,
   UploadCloud,
@@ -16,7 +18,13 @@ import {
 import clsx from 'clsx'
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate'
 import { commitImportOnServer, previewImportOnServer } from '../../lib/api'
-import { detectImportKindFromHeaders, extractPdfImport, type PdfImportInsight } from '../../lib/pdfImport'
+import { extractPdfImport, type PdfImportInsight } from '../../lib/pdfImport'
+import {
+  applyImportColumnMapping,
+  detectImportKindFromHeaders,
+  suggestImportColumnMapping,
+  type ImportColumnMapping,
+} from '../../lib/importSchema'
 import type {
   AuditEvent,
   ImportCellValue,
@@ -409,10 +417,12 @@ function ImportRowsTable({
   rows,
   kind,
   emptyMessage,
+  onEdit,
 }: {
   rows: ImportPreviewRow[]
   kind: 'accepted' | 'rejected'
   emptyMessage: string
+  onEdit: (rowNumber: number) => void
 }) {
   if (rows.length === 0) {
     return (
@@ -431,6 +441,7 @@ function ImportRowsTable({
             <th>Row</th>
             <th>{kind === 'accepted' ? 'Action' : 'Issue'}</th>
             <th>{kind === 'accepted' ? 'Normalized data' : 'Submitted data'}</th>
+            <th>Review</th>
           </tr>
         </thead>
         <tbody>
@@ -449,6 +460,12 @@ function ImportRowsTable({
                 )}
               </td>
               <td>{dataPreview(row, kind === 'accepted' ? 'normalized' : 'data')}</td>
+              <td>
+                <button type="button" className="import-edit-button" onClick={() => onEdit(row.rowNumber)}>
+                  <Pencil size={14} />
+                  <span>Edit row</span>
+                </button>
+              </td>
             </tr>
           ))}
         </tbody>
@@ -460,7 +477,13 @@ function ImportRowsTable({
 export function ImportCenter({ currentRole, userName, onAuditEvent }: ImportCenterProps) {
   const [activeKind, setActiveKind] = useState<ImportKind>('students')
   const [preview, setPreview] = useState<ImportPreviewPayload | null>(null)
+  const [rawRows, setRawRows] = useState<ImportSourceRow[]>([])
   const [sourceRows, setSourceRows] = useState<ImportSourceRow[]>([])
+  const [sourceHeaders, setSourceHeaders] = useState<string[]>([])
+  const [columnMapping, setColumnMapping] = useState<ImportColumnMapping>({})
+  const [mappingOpen, setMappingOpen] = useState(false)
+  const [editingRowNumber, setEditingRowNumber] = useState<number | null>(null)
+  const [editDraft, setEditDraft] = useState<ImportSourceRow>({})
   const [query, setQuery] = useState('')
   const [filename, setFilename] = useState('')
   const [pdfInsight, setPdfInsight] = useState<PdfImportInsight | null>(null)
@@ -485,6 +508,8 @@ export function ImportCenter({ currentRole, userName, onAuditEvent }: ImportCent
     () => rejectedRowsForExport(preview?.invalidRows ?? []),
     [preview],
   )
+  const mappedColumnCount = Object.values(columnMapping).filter(Boolean).length
+  const selectedMappingTargets = new Set(Object.values(columnMapping).filter(Boolean))
 
   if (currentRole !== 'admin') {
     return null
@@ -492,7 +517,13 @@ export function ImportCenter({ currentRole, userName, onAuditEvent }: ImportCent
 
   const clearPreview = () => {
     setPreview(null)
+    setRawRows([])
     setSourceRows([])
+    setSourceHeaders([])
+    setColumnMapping({})
+    setMappingOpen(false)
+    setEditingRowNumber(null)
+    setEditDraft({})
     setFilename('')
     setPdfInsight(null)
     setPreviewTab('accepted')
@@ -541,6 +572,76 @@ export function ImportCenter({ currentRole, userName, onAuditEvent }: ImportCent
     )
   }
 
+  const applyMappingAndRecheck = async () => {
+    const mappedRows = applyImportColumnMapping(rawRows, columnMapping)
+    if (mappedRows.length === 0 || mappedColumnCount === 0) {
+      setBackendStatus('offline')
+      setSyncMessage('Map at least one file column before checking the rows.')
+      return
+    }
+
+    setIsLoading(true)
+    setBackendStatus('checking')
+    setSyncMessage('Applying the selected columns and rechecking every row.')
+    setEditingRowNumber(null)
+
+    try {
+      const payload = await previewImportOnServer(activeKind, mappedRows)
+      setSourceRows(mappedRows)
+      setPreview(payload)
+      setBackendStatus('connected')
+      setSyncMessage(`${mappedColumnCount} file columns mapped. ${payload.summary.valid} rows are ready to save.`)
+      setMappingOpen(false)
+      setPreviewTab(payload.summary.valid > 0 ? 'accepted' : 'rejected')
+    } catch (error) {
+      setBackendStatus('offline')
+      setSyncMessage(error instanceof Error ? error.message : 'Column mapping could not be validated.')
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const beginRowEdit = (rowNumber: number) => {
+    const sourceRow = sourceRows[rowNumber - 2] ?? {}
+    setEditingRowNumber(rowNumber)
+    setEditDraft(Object.fromEntries(
+      activeTemplate.columns.map((column) => [column, sourceRow[column] ?? '']),
+    ))
+  }
+
+  const saveRowCorrection = async () => {
+    if (editingRowNumber === null) {
+      return
+    }
+
+    const rowIndex = editingRowNumber - 2
+    const correctedRows = sourceRows.map((row, index) => index === rowIndex ? { ...row, ...editDraft } : row)
+    setIsLoading(true)
+    setBackendStatus('checking')
+    setSyncMessage(`Rechecking corrected row ${editingRowNumber}.`)
+
+    try {
+      const payload = await previewImportOnServer(activeKind, correctedRows)
+      const stillNeedsCorrection = payload.invalidRows.some((row) => row.rowNumber === editingRowNumber)
+      setSourceRows(correctedRows)
+      setPreview(payload)
+      setBackendStatus('connected')
+      setSyncMessage(
+        stillNeedsCorrection
+          ? `Row ${editingRowNumber} still needs attention. Review the remaining issue below.`
+          : `Row ${editingRowNumber} is corrected and ready to save.`,
+      )
+      setPreviewTab(stillNeedsCorrection ? 'rejected' : 'accepted')
+      setEditingRowNumber(null)
+      setEditDraft({})
+    } catch (error) {
+      setBackendStatus('offline')
+      setSyncMessage(error instanceof Error ? error.message : 'Corrected row could not be validated.')
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
   const handleFileChange = async (file: File | undefined) => {
     if (!file) {
       return
@@ -548,7 +649,13 @@ export function ImportCenter({ currentRole, userName, onAuditEvent }: ImportCent
 
     setIsLoading(true)
     setPreview(null)
+    setRawRows([])
     setSourceRows([])
+    setSourceHeaders([])
+    setColumnMapping({})
+    setMappingOpen(false)
+    setEditingRowNumber(null)
+    setEditDraft({})
     setFilename(file.name)
     setPdfInsight(null)
     setPreviewTab('accepted')
@@ -564,8 +671,15 @@ export function ImportCenter({ currentRole, userName, onAuditEvent }: ImportCent
       if (parsed.kind !== activeKind) {
         setActiveKind(parsed.kind)
       }
-      const payload = await previewImportOnServer(parsed.kind, parsed.rows)
-      setSourceRows(parsed.rows)
+      const headers = headersFromRows(parsed.rows)
+      const mapping = suggestImportColumnMapping(parsed.kind, headers)
+      const mappedRows = applyImportColumnMapping(parsed.rows, mapping)
+      const payload = await previewImportOnServer(parsed.kind, mappedRows)
+      setRawRows(parsed.rows)
+      setSourceHeaders(headers)
+      setColumnMapping(mapping)
+      setMappingOpen(Object.values(mapping).some((target) => !target))
+      setSourceRows(mappedRows)
       setPdfInsight(parsed.insight)
       setPreview(payload)
       setBackendStatus('connected')
@@ -707,6 +821,58 @@ export function ImportCenter({ currentRole, userName, onAuditEvent }: ImportCent
               <span className="import-confidence">{pdfInsight.confidence}% match</span>
             </div>
           ) : null}
+          <section className={clsx('import-column-mapping', mappingOpen && 'is-open')}>
+            <div className="import-column-mapping__summary">
+              <span className="import-mapping-icon"><SlidersHorizontal size={19} /></span>
+              <div>
+                <strong>Column mapping</strong>
+                <small>{mappedColumnCount} of {sourceHeaders.length} file columns matched</small>
+              </div>
+              <button
+                type="button"
+                className="secondary-action"
+                aria-expanded={mappingOpen}
+                onClick={() => setMappingOpen((open) => !open)}
+              >
+                <SlidersHorizontal size={15} />
+                <span>{mappingOpen ? 'Hide mapping' : 'Review mapping'}</span>
+              </button>
+            </div>
+            {mappingOpen ? (
+              <div className="import-column-mapping__body">
+                <p>Match each heading in the file to the correct CampusOps field. Unneeded columns can be ignored.</p>
+                <div className="import-column-mapping__grid">
+                  {sourceHeaders.map((header) => (
+                    <label key={header}>
+                      <span>{header}</span>
+                      <select
+                        value={columnMapping[header] ?? ''}
+                        onChange={(event) => setColumnMapping((current) => ({ ...current, [header]: event.target.value }))}
+                      >
+                        <option value="">Ignore this column</option>
+                        {activeTemplate.columns.map((column) => (
+                          <option
+                            key={column}
+                            value={column}
+                            disabled={columnMapping[header] !== column && selectedMappingTargets.has(column)}
+                          >
+                            {column}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  ))}
+                </div>
+                <div className="import-column-mapping__actions">
+                  <small>Applying mapping rechecks the original file rows. Make mapping changes before editing individual rows.</small>
+                  <button type="button" className="primary-action" disabled={isLoading} onClick={() => void applyMappingAndRecheck()}>
+                    <RefreshCw size={15} />
+                    <span>{isLoading ? 'Checking rows' : 'Apply mapping and recheck'}</span>
+                  </button>
+                </div>
+              </div>
+            ) : null}
+          </section>
           <div className="import-section-heading import-section-heading--review">
             <span>3</span>
             <div>
@@ -736,6 +902,11 @@ export function ImportCenter({ currentRole, userName, onAuditEvent }: ImportCent
               <strong>
                 {preview.summary.creates} / {preview.summary.updates}
               </strong>
+            </article>
+            <article className={clsx(preview.summary.conflicts > 0 && 'is-warning')}>
+              <AlertTriangle size={18} />
+              <span>Timetable conflicts</span>
+              <strong>{preview.summary.conflicts}</strong>
             </article>
           </div>
 
@@ -782,10 +953,49 @@ export function ImportCenter({ currentRole, userName, onAuditEvent }: ImportCent
               </div>
               {previewTab === 'accepted' ? <CheckCircle2 size={20} /> : <XCircle size={20} />}
             </div>
+            {editingRowNumber !== null ? (
+              <div className="import-row-editor" role="region" aria-label={`Edit import row ${editingRowNumber}`}>
+                <div className="import-row-editor__heading">
+                  <div>
+                    <strong>Edit row {editingRowNumber}</strong>
+                    <small>Correct the values, then recheck the row before saving.</small>
+                  </div>
+                  <button
+                    type="button"
+                    className="icon-button"
+                    aria-label="Cancel row editing"
+                    onClick={() => {
+                      setEditingRowNumber(null)
+                      setEditDraft({})
+                    }}
+                  >
+                    <XCircle size={17} />
+                  </button>
+                </div>
+                <div className="import-row-editor__grid">
+                  {activeTemplate.columns.map((column) => (
+                    <label key={column}>
+                      <span>{column}</span>
+                      <input
+                        value={String(editDraft[column] ?? '')}
+                        onChange={(event) => setEditDraft((current) => ({ ...current, [column]: event.target.value }))}
+                      />
+                    </label>
+                  ))}
+                </div>
+                <div className="import-row-editor__actions">
+                  <button type="button" className="primary-action" disabled={isLoading} onClick={() => void saveRowCorrection()}>
+                    <FileCheck2 size={15} />
+                    <span>{isLoading ? 'Rechecking' : 'Save correction and recheck'}</span>
+                  </button>
+                </div>
+              </div>
+            ) : null}
             <ImportRowsTable
               rows={previewTab === 'accepted' ? visibleValidRows : visibleInvalidRows}
               kind={previewTab}
               emptyMessage={previewTab === 'accepted' ? 'No correct rows match this search.' : 'No rows need correction.'}
+              onEdit={beginRowEdit}
             />
           </section>
         </>

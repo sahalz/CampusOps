@@ -12,10 +12,12 @@ import {
   createStaffProfile,
   createSubject,
   commitImportRows,
+  decideAutomationRun,
   deleteAuthSession,
   getActionCenter,
   getAcademicState,
   getAuditEvents,
+  getAutomationState,
   getAuthSession,
   getAuthUsers,
   getCircularState,
@@ -30,13 +32,19 @@ import {
   getSubjects,
   previewImportRows,
   resetAcademicData,
+  resetAutomationData,
   resetCircularData,
   resetKnowledgeData,
+  runKnowledgeEvaluation,
+  runAutomationRules,
   resetMasterData,
   resetStaffData,
   saveAcademicState,
   searchCircularIntelligence,
   searchKnowledgeBase,
+  markAutomationNotificationRead,
+  retryAutomationRun,
+  updateAutomationRule,
   updateDepartment,
   updateInstitutionProfile,
   updateStaffProfile,
@@ -725,6 +733,111 @@ async function handleActionCenter(request, response, pathname, searchParams) {
   notFound(response)
 }
 
+async function handleAutomations(request, response, pathname) {
+  const session = requireRoles(request, response, ['admin'])
+  if (!session) {
+    return
+  }
+
+  if (pathname === '/api/automations') {
+    if (request.method !== 'GET') {
+      methodNotAllowed(response)
+      return
+    }
+    sendJson(response, 200, getAutomationState())
+    return
+  }
+
+  if (pathname === '/api/automations/run') {
+    if (request.method !== 'POST') {
+      methodNotAllowed(response)
+      return
+    }
+    const input = await readJson(request)
+    sendJson(response, 201, runAutomationRules({ ruleId: input?.ruleId }, session.user.name))
+    return
+  }
+
+  if (pathname === '/api/automations/reset') {
+    if (request.method !== 'POST') {
+      methodNotAllowed(response)
+      return
+    }
+    sendJson(response, 200, resetAutomationData(session.user.name))
+    return
+  }
+
+  const ruleMatch = pathname.match(/^\/api\/automations\/rules\/([^/]+)$/)
+  if (ruleMatch) {
+    if (request.method !== 'PUT') {
+      methodNotAllowed(response)
+      return
+    }
+    const result = updateAutomationRule(
+      decodeURIComponent(ruleMatch[1]),
+      await readJson(request),
+      session.user.name,
+    )
+    if (!result) {
+      notFound(response)
+      return
+    }
+    sendJson(response, 200, result)
+    return
+  }
+
+  const decisionMatch = pathname.match(/^\/api\/automations\/runs\/([^/]+)\/decision$/)
+  if (decisionMatch) {
+    if (request.method !== 'POST') {
+      methodNotAllowed(response)
+      return
+    }
+    const result = decideAutomationRun(
+      decodeURIComponent(decisionMatch[1]),
+      await readJson(request),
+      session.user.name,
+    )
+    if (!result) {
+      notFound(response)
+      return
+    }
+    sendJson(response, 200, result)
+    return
+  }
+
+  const retryMatch = pathname.match(/^\/api\/automations\/runs\/([^/]+)\/retry$/)
+  if (retryMatch) {
+    if (request.method !== 'POST') {
+      methodNotAllowed(response)
+      return
+    }
+    const result = retryAutomationRun(decodeURIComponent(retryMatch[1]), session.user.name)
+    if (!result) {
+      notFound(response)
+      return
+    }
+    sendJson(response, 201, result)
+    return
+  }
+
+  const notificationMatch = pathname.match(/^\/api\/automations\/notifications\/([^/]+)\/read$/)
+  if (notificationMatch) {
+    if (request.method !== 'POST') {
+      methodNotAllowed(response)
+      return
+    }
+    const result = markAutomationNotificationRead(decodeURIComponent(notificationMatch[1]))
+    if (!result) {
+      notFound(response)
+      return
+    }
+    sendJson(response, 200, result)
+    return
+  }
+
+  notFound(response)
+}
+
 async function handleImports(request, response, pathname) {
   if (pathname === '/api/import/preview') {
     if (request.method !== 'POST') {
@@ -767,11 +880,12 @@ async function handleKnowledge(request, response, pathname) {
       return
     }
 
-    if (!requireRoles(request, response, ['admin', 'faculty', 'student'])) {
+    const session = requireRoles(request, response, ['admin', 'faculty', 'student'])
+    if (!session) {
       return
     }
 
-    sendJson(response, 200, getKnowledgeState())
+    sendJson(response, 200, getKnowledgeState(session.user))
     return
   }
 
@@ -786,7 +900,22 @@ async function handleKnowledge(request, response, pathname) {
       return
     }
 
-    sendJson(response, 200, searchKnowledgeBase(await readJson(request), session.user.name))
+    sendJson(response, 200, searchKnowledgeBase(await readJson(request), session.user))
+    return
+  }
+
+  if (pathname === '/api/knowledge/evaluation') {
+    if (request.method !== 'GET') {
+      methodNotAllowed(response)
+      return
+    }
+
+    const session = requireRoles(request, response, ['admin'])
+    if (!session) {
+      return
+    }
+
+    sendJson(response, 200, runKnowledgeEvaluation(session.user))
     return
   }
 
@@ -899,6 +1028,11 @@ const server = createServer(async (request, response) => {
       return
     }
 
+    if (pathname.startsWith('/api/automations')) {
+      await handleAutomations(request, response, pathname)
+      return
+    }
+
     if (pathname.startsWith('/api/import')) {
       await handleImports(request, response, pathname)
       return
@@ -923,3 +1057,16 @@ const server = createServer(async (request, response) => {
 server.listen(port, host, () => {
   console.log(`CampusOps backend running at http://${host}:${port}`)
 })
+
+const configuredAutomationInterval = Number(process.env.CAMPUSOPS_AUTOMATION_INTERVAL_MS ?? 300_000)
+if (Number.isFinite(configuredAutomationInterval) && configuredAutomationInterval > 0) {
+  const automationInterval = Math.max(60_000, configuredAutomationInterval)
+  const automationScheduler = setInterval(() => {
+    try {
+      runAutomationRules({ scheduler: true }, 'CampusOps Scheduler')
+    } catch (error) {
+      console.error('CampusOps automation scheduler failed:', error instanceof Error ? error.message : error)
+    }
+  }, automationInterval)
+  automationScheduler.unref()
+}

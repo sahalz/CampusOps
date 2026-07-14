@@ -81,6 +81,9 @@ const ReportsCenter = lazy(() =>
 const ActionCenter = lazy(() =>
   import('./components/actions/ActionCenter').then((module) => ({ default: module.ActionCenter })),
 )
+const AutomationCenter = lazy(() =>
+  import('./components/automation/AutomationCenter').then((module) => ({ default: module.AutomationCenter })),
+)
 
 const roleLabels: Record<Role, string> = {
   student: 'Student',
@@ -196,6 +199,11 @@ const sectionDescriptions: Record<string, { eyebrow: string; title: string; copy
     eyebrow: 'AI assistant',
     title: 'Request Router',
     copy: 'Use the agent workflow tools only when you need routing, workflow simulation, or automation review.',
+  },
+  'automation-control': {
+    eyebrow: 'Operations engine',
+    title: 'Automation Control',
+    copy: 'Run live college checks, manage human approval gates, suppress duplicates, and review notification delivery.',
   },
   'college-setup': {
     eyebrow: 'Adoption',
@@ -344,6 +352,13 @@ function App() {
           roles: ['admin', 'faculty'] as Role[],
         },
         {
+          id: 'automation-control',
+          label: 'Automation',
+          icon: PlugZap,
+          group: 'Intelligence',
+          roles: ['admin'] as Role[],
+        },
+        {
           id: 'automation',
           label: 'AI Router',
           icon: Bot,
@@ -393,6 +408,7 @@ function App() {
       'imports',
       'reports',
       'staff',
+      'automation-control',
       'college-setup',
     ])
     return allNavItems.filter((item) => everydayAdminSections.has(item.id) || item.id === activeNavId)
@@ -851,6 +867,22 @@ function App() {
               onAuditEvent={appendAuditEvent}
             />
           </Suspense>
+          </div>
+        ) : null}
+
+        {activeNavId === 'automation-control' && activeRole === 'admin' ? (
+          <div id="section-automation-control" className="section-anchor active-section">
+            <Suspense
+              fallback={
+                <div className="automation-loading">
+                  <PlugZap size={18} />
+                  <strong>Loading automation controls</strong>
+                  <span>Preparing rules, approvals, runs, and notifications.</span>
+                </div>
+              }
+            >
+              <AutomationCenter userName={session.name} onAuditEvent={appendAuditEvent} />
+            </Suspense>
           </div>
         ) : null}
 
